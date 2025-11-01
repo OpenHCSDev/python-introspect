@@ -1,0 +1,9 @@
+# Sphinx build outputs
+build/
+_build/
+
+# Generated API documentation
+source/api/generated/
+
+# Sphinx cache
+.doctrees/
