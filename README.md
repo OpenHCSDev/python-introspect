@@ -4,6 +4,8 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/trissim/python-introspect/actions/workflows/ci.yml/badge.svg)](https://github.com/trissim/python-introspect/actions/workflows/ci.yml)
+[![PyPI version](https://badge.fury.io/py/python-introspect.svg)](https://badge.fury.io/py/python-introspect)
 
 ## Features
 
@@ -56,9 +58,41 @@ for param in params:
 
 Full documentation available at: https://github.com/trissim/python-introspect
 
+## Development
+
+### Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/trissim/python-introspect.git
+cd python-introspect
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install in development mode with dev dependencies
+pip install -e ".[dev]"
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run with coverage
+pytest tests/ --cov=python_introspect --cov-report=term --cov-report=html
+
+# Run linting and formatting checks
+ruff check src/ tests/
+black --check src/ tests/
+mypy src/python_introspect/
+```
+
 ## Contributing
 
-Contributions welcome! See CONTRIBUTING.md for guidelines.
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Credits
 

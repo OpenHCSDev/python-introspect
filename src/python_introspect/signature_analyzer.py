@@ -55,9 +55,14 @@ class DocstringInfo(NamedTuple):
     """Information extracted from a docstring."""
     summary: Optional[str] = None  # First line or brief description
     description: Optional[str] = None  # Full description
-    parameters: Dict[str, str] = None  # Parameter name -> description mapping
+    parameters: Optional[Dict[str, str]] = None  # Parameter name -> description mapping (None = empty)
     returns: Optional[str] = None  # Return value description
     examples: Optional[str] = None  # Usage examples
+
+    @property
+    def parameters_dict(self) -> Dict[str, str]:
+        """Get parameters as a dict, never None."""
+        return self.parameters if self.parameters is not None else {}
 
 class DocstringExtractor:
     """Extract structured information from docstrings."""
@@ -73,14 +78,14 @@ class DocstringExtractor:
             DocstringInfo with parsed docstring components
         """
         if not target:
-            return DocstringInfo()
+            return DocstringInfo(parameters={})
 
         # ENHANCEMENT: Handle lazy dataclasses by extracting from their base class
         actual_target = DocstringExtractor._resolve_lazy_target(target)
 
         docstring = inspect.getdoc(actual_target)
         if not docstring:
-            return DocstringInfo()
+            return DocstringInfo(parameters={})
 
         # Try AST-based parsing first for better accuracy
         try:
@@ -292,14 +297,17 @@ class DocstringExtractor:
         description = '\n'.join(description_lines).strip()
         if description == summary:
             description = None
+        # Treat empty string as None for cleaner API
+        if description == '':
+            description = None
 
         return DocstringInfo(
             summary=summary,
             description=description,
-            parameters=parameters or {},
+            parameters=parameters if parameters else {},  # Always return dict, never None
             returns=returns,
             examples=examples
-        )
+        ) if summary or description or parameters or returns or examples else DocstringInfo(parameters={})
 
     @staticmethod
     def _parse_inline_parameters(line: str) -> Dict[str, str]:
@@ -476,7 +484,11 @@ class SignatureAnalyzer:
 
 
             # Get parameter description from docstring
-            param_description = docstring_info.parameters.get(param_name) if docstring_info else None
+            param_description = (
+                docstring_info.parameters.get(param_name)
+                if docstring_info and docstring_info.parameters
+                else None
+            )
 
             parameters[param_name] = ParameterInfo(
                 name=param_name,
@@ -495,15 +507,15 @@ class SignatureAnalyzer:
 
         Universal logic that works with any object:
         - Constructors (__init__ methods): don't skip (all params are configuration)
-        - All other callables: skip first param (assume it's data being processed)
-        """
-        # Check if this is any __init__ method (constructor)
-        if (hasattr(callable_obj, '__qualname__') and
-            callable_obj.__qualname__.endswith(CONSTANTS.INIT_METHOD_SUFFIX)):
-            return False
+        - Regular functions: don't skip (by default, analyze all parameters)
 
-        # Everything else: skip first parameter
-        return True
+        Note: This was originally designed for image processing functions where the
+        first parameter is typically the input image. For general-purpose use,
+        we default to NOT skipping parameters unless explicitly requested via
+        skip_first_param parameter.
+        """
+        # By default, don't skip any parameters for general-purpose introspection
+        return False
 
     @staticmethod
     def _extract_original_parameters(callable_obj: Callable) -> Dict[str, ParameterInfo]:
@@ -603,6 +615,10 @@ class SignatureAnalyzer:
             parameters = {}
 
             for field in dataclasses.fields(dataclass_type):
+                # Skip dunder fields (internal/reserved fields)
+                if field.name.startswith(CONSTANTS.DUNDER_PREFIX) and field.name.endswith(CONSTANTS.DUNDER_SUFFIX):
+                    continue
+
                 param_type = type_hints.get(field.name, str)
 
                 # Get default value
