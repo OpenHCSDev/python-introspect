@@ -82,12 +82,11 @@ class UnifiedParameterAnalyzer:
             if dataclasses.is_dataclass(target):
                 result = UnifiedParameterAnalyzer._analyze_dataclass_type(target)
             else:
-                # CRITICAL FIX: For classes, use _analyze_object_instance with use_signature_defaults=True
-                # This traverses MRO to get all inherited parameters with signature defaults
+                # For classes, use _analyze_object_instance to traverse MRO
                 # Create a dummy instance just to get the class hierarchy analyzed
                 try:
                     dummy_instance = target.__new__(target)
-                    result = UnifiedParameterAnalyzer._analyze_object_instance(dummy_instance, use_signature_defaults=True)
+                    result = UnifiedParameterAnalyzer._analyze_object_instance(dummy_instance)
                 except:
                     # If we can't create a dummy instance, fall back to just analyzing __init__
                     result = UnifiedParameterAnalyzer._analyze_callable(target.__init__)
@@ -147,12 +146,14 @@ class UnifiedParameterAnalyzer:
         return unified_params
 
     @staticmethod
-    def _analyze_object_instance(instance: object, use_signature_defaults: bool = False) -> Dict[str, UnifiedParameterInfo]:
+    def _analyze_object_instance(instance: object) -> Dict[str, UnifiedParameterInfo]:
         """Analyze a regular object instance by examining its full inheritance hierarchy.
+
+        Always returns CLASS signature defaults (not instance values).
+        ObjectState extracts instance values separately via object.__getattribute__.
 
         Args:
             instance: Object instance to analyze
-            use_signature_defaults: If True, use signature defaults instead of instance values
         """
         # Use MRO to get all constructor parameters from the inheritance chain
         instance_class = type(instance)
@@ -184,25 +185,13 @@ class UnifiedParameterAnalyzer:
                 # Add parameters that haven't been seen yet (most specific wins)
                 for param_name, param_info in class_params.items():
                     if param_name not in all_params and param_name != 'kwargs':
-                        # CRITICAL FIX: For reset functionality, use signature defaults instead of instance values
-                        if use_signature_defaults:
-                            default_value = param_info.default_value
-                        else:
-                            # Get current value from instance if it exists
-                            # CRITICAL: Use object.__getattribute__ to bypass __getattribute__ overrides
-                            # This ensures we get the raw stored value, not a resolved/computed value
-                            try:
-                                default_value = object.__getattribute__(instance, param_name)
-                            except AttributeError:
-                                default_value = param_info.default_value
-
-                        # Create parameter info with appropriate default value
+                        # Always use signature defaults - ObjectState extracts instance values separately
                         all_params[param_name] = UnifiedParameterInfo(
                             name=param_name,
                             param_type=param_info.param_type,
-                            default_value=default_value,
+                            default_value=param_info.default_value,
                             is_required=param_info.is_required,
-                            description=param_info.description,  # CRITICAL FIX: Include description
+                            description=param_info.description,
                             source_type="object_instance"
                         )
 
@@ -215,30 +204,14 @@ class UnifiedParameterAnalyzer:
 
     @staticmethod
     def _analyze_dataclass_instance(instance: object) -> Dict[str, UnifiedParameterInfo]:
-        """Analyze a dataclass instance."""
-        # Get the type and analyze it
+        """Analyze a dataclass instance.
+
+        Always returns CLASS signature defaults (not instance values).
+        ObjectState extracts instance values separately via object.__getattribute__.
+        """
+        # Get the type and analyze it - returns CLASS signature defaults
         dataclass_type = type(instance)
-        unified_params = UnifiedParameterAnalyzer._analyze_dataclass_type(dataclass_type)
-
-        # Update default values with current instance values
-        # CRITICAL: Always use object.__getattribute__ to bypass __getattribute__ overrides
-        # This ensures we get the raw stored value, not a resolved/computed value
-        for name, param_info in unified_params.items():
-            if hasattr(instance, name):
-                # Bypass __getattribute__ to get raw stored value (not resolved)
-                current_value = object.__getattribute__(instance, name)
-
-                # Create new UnifiedParameterInfo with current value as default
-                unified_params[name] = UnifiedParameterInfo(
-                    name=param_info.name,
-                    param_type=param_info.param_type,
-                    default_value=current_value,
-                    is_required=param_info.is_required,
-                    description=param_info.description,
-                    source_type="dataclass_instance"
-                )
-
-        return unified_params
+        return UnifiedParameterAnalyzer._analyze_dataclass_type(dataclass_type)
     
     @staticmethod
     def analyze_nested(target: Union[Callable, Type, object], parent_info: Dict[str, UnifiedParameterInfo] = None) -> Dict[str, UnifiedParameterInfo]:
