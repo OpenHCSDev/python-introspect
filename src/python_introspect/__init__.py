@@ -12,6 +12,8 @@ from .signature_analyzer import (
     ParameterInfo,
     DocstringInfo,
     DocstringExtractor,
+    register_namespace_provider,
+    register_type_resolver,
 )
 from .unified_parameter_analyzer import (
     UnifiedParameterAnalyzer,
@@ -35,6 +37,9 @@ __all__ = [
     # Unified analysis
     "UnifiedParameterAnalyzer",
     "UnifiedParameterInfo",
+    # Plugin system
+    "register_namespace_provider",
+    "register_type_resolver",
     # Exceptions
     "IntrospectionError",
     "SignatureAnalysisError",

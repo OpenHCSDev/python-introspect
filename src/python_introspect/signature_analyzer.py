@@ -1,32 +1,86 @@
-# File: openhcs/introspection/signature_analyzer.py
+# File: python_introspect/signature_analyzer.py
 
 import ast
 import inspect
 import dataclasses
 import re
-from typing import Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type
+from typing import Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type, List
 from dataclasses import dataclass
 
-# Lazy imports for OpenHCS-specific type resolution (optional dependency)
-# These are only imported when needed for type hint resolution
-_lazy_module = None
-_config_module = None
+# Plugin system for namespace and type resolution
+# External packages can register their own providers/resolvers
+_namespace_providers: List[Callable[[], Dict[str, Any]]] = []
+_type_resolvers: List[Callable[[type], Optional[type]]] = []
 
 
-def _get_openhcs_modules():
-    """Lazy-load OpenHCS-specific modules for type resolution."""
-    global _lazy_module, _config_module
-    if _lazy_module is None:
+def register_namespace_provider(provider: Callable[[], Dict[str, Any]]) -> None:
+    """Register a namespace provider for forward reference resolution.
+
+    Args:
+        provider: A callable that returns a dict of names to types/values
+                 to be used when resolving forward references in type hints.
+
+    Example:
+        def my_namespace_provider():
+            import mypackage
+            return vars(mypackage)
+
+        register_namespace_provider(my_namespace_provider)
+    """
+    _namespace_providers.append(provider)
+
+
+def register_type_resolver(resolver: Callable[[type], Optional[type]]) -> None:
+    """Register a type resolver for custom type transformations.
+
+    Args:
+        resolver: A callable that takes a type and returns either:
+                 - A transformed type (e.g., LazyConfig -> Config)
+                 - None to defer to other resolvers
+
+    Example:
+        def my_type_resolver(t):
+            if t.__name__.startswith('Lazy'):
+                return get_base_type(t)
+            return None
+
+        register_type_resolver(my_type_resolver)
+    """
+    _type_resolvers.append(resolver)
+
+
+def _get_registered_namespaces() -> Dict[str, Any]:
+    """Get all registered namespaces merged together."""
+    result = {}
+    for provider in _namespace_providers:
         try:
-            import openhcs.config_framework.lazy_factory as lazy_module
-            import openhcs.core.config as config_module
-            _lazy_module = lazy_module
-            _config_module = config_module
-        except ImportError:
-            # If OpenHCS modules aren't available, return empty dicts
-            _lazy_module = type('EmptyModule', (), {})()
-            _config_module = type('EmptyModule', (), {})()
-    return _lazy_module, _config_module
+            namespace = provider()
+            if namespace:
+                result.update(namespace)
+        except Exception:
+            # Silently skip providers that fail
+            pass
+    return result
+
+
+def _resolve_type(t: type) -> type:
+    """Resolve a type using registered type resolvers.
+
+    Args:
+        t: The type to resolve
+
+    Returns:
+        The resolved type, or the original type if no resolver handled it
+    """
+    for resolver in _type_resolvers:
+        try:
+            resolved = resolver(t)
+            if resolved is not None:
+                return resolved
+        except Exception:
+            # Silently skip resolvers that fail
+            pass
+    return t
 
 
 @dataclass(frozen=True)
@@ -386,15 +440,13 @@ class SignatureAnalyzer:
         """
         sig = inspect.signature(callable_obj)
         # Build comprehensive namespace for forward reference resolution
-        # Start with function's globals (which contain the actual types), then add our modules as fallback
-        lazy_module, config_module = _get_openhcs_modules()
+        # Start with registered namespaces, then add function's globals
         globalns = {
-            **vars(lazy_module),
-            **vars(config_module),
+            **_get_registered_namespaces(),
             **getattr(callable_obj, '__globals__', {})
         }
 
-        # For OpenHCS functions, prioritize the function's actual module globals
+        # For functions with a module, prioritize the function's actual module globals
         if hasattr(callable_obj, '__module__') and callable_obj.__module__:
             try:
                 import sys
@@ -402,8 +454,7 @@ class SignatureAnalyzer:
                 if actual_module:
                     # Function's module globals should take precedence for type resolution
                     globalns = {
-                        **vars(lazy_module),
-                        **vars(config_module),
+                        **_get_registered_namespaces(),
                         **vars(actual_module)  # This overwrites with the actual module types
                     }
             except Exception:
@@ -962,8 +1013,7 @@ class SignatureAnalyzer:
     def _resolve_lazy_dataclass_for_docs(dataclass_type: type) -> type:
         """Resolve lazy dataclasses to their base classes for documentation extraction.
 
-        This handles the case where PipelineConfig (lazy) should resolve to GlobalPipelineConfig
-        for documentation purposes.
+        Uses registered type resolvers to handle custom type transformations.
 
         Args:
             dataclass_type: The dataclass type (potentially lazy)
@@ -971,47 +1021,7 @@ class SignatureAnalyzer:
         Returns:
             The resolved dataclass type for documentation extraction
         """
-        try:
-            # Check if this is a lazy dataclass by looking for common patterns
-            class_name = dataclass_type.__name__
-
-            # Handle PipelineConfig -> GlobalPipelineConfig
-            if class_name == 'PipelineConfig':
-                try:
-                    from openhcs.core.config import GlobalPipelineConfig
-                    return GlobalPipelineConfig
-                except ImportError:
-                    pass
-
-            # Handle LazyXxxConfig -> XxxConfig mappings
-            if class_name.startswith('Lazy') and class_name.endswith('Config'):
-                try:
-                    # Remove 'Lazy' prefix: LazyWellFilterConfig -> WellFilterConfig
-                    base_class_name = class_name[4:]  # Remove 'Lazy'
-
-                    # Try to import from openhcs.core.config
-                    from openhcs.core import config as config_module
-                    if hasattr(config_module, base_class_name):
-                        return getattr(config_module, base_class_name)
-                except (ImportError, AttributeError):
-                    pass
-
-            # For other lazy dataclasses, try to find the Global version
-            if not class_name.startswith('Global') and class_name.endswith('Config'):
-                try:
-                    # Try to find GlobalXxxConfig version
-                    global_class_name = f'Global{class_name}'
-                    module = __import__(dataclass_type.__module__, fromlist=[global_class_name])
-                    if hasattr(module, global_class_name):
-                        return getattr(module, global_class_name)
-                except (ImportError, AttributeError):
-                    pass
-
-            # If no resolution found, return the original type
-            return dataclass_type
-
-        except Exception:
-            return dataclass_type
+        return _resolve_type(dataclass_type)
 
     @staticmethod
     def _extract_all_field_docs(dataclass_type: type) -> Dict[str, str]:
