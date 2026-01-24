@@ -42,9 +42,9 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/trissim/python-introspect"
-Repository = "https://github.com/trissim/python-introspect"
-Issues = "https://github.com/trissim/python-introspect/issues"
+Homepage = "https://github.com/OpenHCSDev/python-introspect"
+Repository = "https://github.com/OpenHCSDev/python-introspect"
+Issues = "https://github.com/OpenHCSDev/python-introspect/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
