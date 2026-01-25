@@ -5,7 +5,7 @@ This package provides utilities for introspecting Python functions, methods,
 dataclasses, and type hints.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
