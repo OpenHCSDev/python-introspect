@@ -30,6 +30,12 @@ from .exceptions import (
     DocstringParsingError,
     TypeResolutionError,
 )
+from .enableable import (
+    Enableable,
+    is_enableable,
+    mark_enableable,
+    ENABLED_FIELD,
+)
 
 __all__ = [
     # Version
@@ -50,4 +56,9 @@ __all__ = [
     "SignatureAnalysisError",
     "DocstringParsingError",
     "TypeResolutionError",
+    # Enableable
+    "Enableable",
+    "is_enableable",
+    "mark_enableable",
+    "ENABLED_FIELD",
 ]
