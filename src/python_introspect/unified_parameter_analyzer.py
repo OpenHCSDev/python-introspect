@@ -152,12 +152,22 @@ class UnifiedParameterAnalyzer:
         Always returns CLASS signature defaults (not instance values).
         ObjectState extracts instance values separately via object.__getattribute__.
 
+        For dynamic containers like SimpleNamespace (which use **kwargs in __init__),
+        falls back to inspecting __dict__ to discover attributes and their types.
+
         Args:
             instance: Object instance to analyze
         """
+        from types import SimpleNamespace
+        import logging
+        _logger = logging.getLogger(__name__)
+
         # Use MRO to get all constructor parameters from the inheritance chain
         instance_class = type(instance)
         all_params = {}
+        found_kwargs_only = False
+
+        _logger.debug(f"🔧 _analyze_object_instance: instance_class={instance_class.__name__}, MRO={[c.__name__ for c in instance_class.__mro__]}")
 
         # Traverse MRO from most specific to most general (like dual-axis resolver)
         for cls in instance_class.__mro__:
@@ -176,10 +186,15 @@ class UnifiedParameterAnalyzer:
                 if 'self' in class_params:
                     del class_params['self']
 
-                # Special handling for **kwargs - if we see 'kwargs', skip this class
-                # and let parent classes provide the actual parameters
-                if 'kwargs' in class_params and len(class_params) <= 2:
-                    # This class uses **kwargs, skip it and let parent classes define parameters
+                _logger.debug(f"🔧 _analyze_object_instance: cls={cls.__name__}, class_params after removing self={list(class_params.keys())}")
+
+                # Special handling for *args/**kwargs - if params are only args/kwargs, skip this class
+                # This handles dynamic containers like SimpleNamespace(self, /, *args, **kwargs)
+                variadic_only = set(class_params.keys()) <= {'args', 'kwargs'}
+                if variadic_only and class_params:
+                    # This class uses only *args/**kwargs, skip it and use __dict__ fallback
+                    found_kwargs_only = True
+                    _logger.debug(f"🔧 _analyze_object_instance: cls={cls.__name__} has only variadic params {list(class_params.keys())}, skipping, found_kwargs_only=True")
                     continue
 
                 # Add parameters that haven't been seen yet (most specific wins)
@@ -199,6 +214,26 @@ class UnifiedParameterAnalyzer:
                 # Skip classes that can't be analyzed - this is legitimate since some classes
                 # in MRO might not have analyzable constructors (e.g., ABC, object)
                 continue
+
+        # Fallback for dynamic containers (SimpleNamespace, etc.): inspect __dict__
+        # This handles objects that store attrs via **kwargs and have no static signature
+        _logger.debug(f"🔧 _analyze_object_instance: after MRO loop, all_params={list(all_params.keys())}, found_kwargs_only={found_kwargs_only}")
+        if not all_params and found_kwargs_only and hasattr(instance, '__dict__'):
+            _logger.debug(f"🔧 _analyze_object_instance: FALLBACK triggered, inspecting __dict__={list(instance.__dict__.keys())}")
+            for attr_name, attr_value in instance.__dict__.items():
+                if attr_name.startswith('_'):
+                    continue
+                # Infer type from value
+                attr_type = type(attr_value) if attr_value is not None else type(None)
+                all_params[attr_name] = UnifiedParameterInfo(
+                    name=attr_name,
+                    param_type=attr_type,
+                    default_value=attr_value,
+                    is_required=False,
+                    description=None,
+                    source_type="dynamic_attr"
+                )
+            _logger.debug(f"🔧 _analyze_object_instance: after fallback, all_params={list(all_params.keys())}")
 
         return all_params
 
