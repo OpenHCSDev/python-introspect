@@ -11,7 +11,7 @@ class TestPackageImports:
         """Test that __version__ is available."""
         assert hasattr(python_introspect, "__version__")
         assert isinstance(python_introspect.__version__, str)
-        assert python_introspect.__version__ == "0.1.0"
+        assert python_introspect.__version__ == "0.1.4"
 
     def test_signature_analyzer_import(self):
         """Test SignatureAnalyzer is importable."""
@@ -74,8 +74,12 @@ class TestPublicAPI:
             "ParameterInfo",
             "DocstringInfo",
             "DocstringExtractor",
+            "set_signature_analysis_target",
+            "signature_analysis_target",
             "UnifiedParameterAnalyzer",
             "UnifiedParameterInfo",
+            "set_parameter_exclusions",
+            "parameter_exclusions",
             "IntrospectionError",
             "SignatureAnalysisError",
             "DocstringParsingError",

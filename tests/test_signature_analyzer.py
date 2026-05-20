@@ -1,5 +1,6 @@
 """Tests for SignatureAnalyzer."""
 
+import inspect
 import pytest
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
@@ -8,6 +9,8 @@ from python_introspect import (
     ParameterInfo,
     DocstringExtractor,
     DocstringInfo,
+    mark_enableable,
+    set_signature_analysis_target,
 )
 
 
@@ -43,6 +46,27 @@ class TestSignatureAnalyzer:
         assert "c" in params
         assert params["b"].default_value == "default"
         assert params["c"].is_required is True
+
+    def test_analyze_uses_explicit_signature_parameter_annotation(self):
+        """Synthetic signatures can own parameter annotations absent from __annotations__."""
+        def wrapper(**kwargs):
+            pass
+
+        wrapper.__signature__ = inspect.Signature(
+            parameters=[
+                inspect.Parameter(
+                    "slice_by_slice",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=False,
+                    annotation=bool,
+                ),
+            ]
+        )
+
+        params = SignatureAnalyzer.analyze(wrapper)
+
+        assert params["slice_by_slice"].param_type is bool
+        assert params["slice_by_slice"].default_value is False
 
     def test_analyze_function_with_docstring(self):
         """Test analyzing function with docstring parameters."""
@@ -214,6 +238,67 @@ class TestSignatureAnalyzer:
         params = analyzer.analyze(None)
 
         assert params == {}
+
+    def test_analyze_uses_declared_signature_analysis_target(self):
+        """Test wrappers can declare a user-facing callable for analysis."""
+        def raw_func(image, *, threshold: float = 0.5):
+            """Raw function.
+
+            Args:
+                threshold: Foreground cutoff
+            """
+            pass
+
+        class RuntimeWrapper:
+            def __call__(
+                self,
+                image,
+                *,
+                runtime_context,
+                enabled: bool = True,
+                **kwargs,
+            ):
+                pass
+
+        wrapper = RuntimeWrapper()
+        set_signature_analysis_target(wrapper, raw_func)
+
+        analyzer = SignatureAnalyzer()
+        params = analyzer.analyze(wrapper)
+
+        assert "threshold" in params
+        assert "runtime_context" not in params
+        assert "enabled" not in params
+        assert params["threshold"].param_type == float
+        assert params["threshold"].default_value == 0.5
+        assert params["threshold"].description == "Foreground cutoff"
+
+    def test_analyze_preserves_enableable_wrapper_enabled_parameter(self):
+        """Enableable wrappers keep enabled metadata while projecting raw params."""
+        def raw_func(image, *, threshold: float = 0.5):
+            pass
+
+        class RuntimeWrapper:
+            def __call__(
+                self,
+                image,
+                *,
+                runtime_context,
+                enabled: bool = True,
+                **kwargs,
+            ):
+                pass
+
+        wrapper = RuntimeWrapper()
+        set_signature_analysis_target(wrapper, raw_func)
+        mark_enableable(wrapper)
+
+        params = SignatureAnalyzer.analyze(wrapper)
+
+        assert "runtime_context" not in params
+        assert params["threshold"].param_type == float
+        assert params["enabled"].param_type is bool
+        assert params["enabled"].default_value is True
 
 
 class TestDocstringExtractor:

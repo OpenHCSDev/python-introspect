@@ -15,18 +15,41 @@ import inspect
 from abc import ABC, ABCMeta
 from dataclasses import dataclass
 from typing import Any
+from weakref import WeakKeyDictionary
 
 
 ENABLED_FIELD = 'enabled'
 
 _ENABLEABLE_TAG = object()
+_enableable_objects: WeakKeyDictionary[Any, object] = WeakKeyDictionary()
+_enableable_objects_by_id: dict[int, tuple[Any, object]] = {}
+
+
+def _remember_enableable(obj: Any) -> None:
+    """Record explicit enableable branding without mutating the object."""
+    try:
+        _enableable_objects[obj] = _ENABLEABLE_TAG
+    except TypeError:
+        _enableable_objects_by_id[id(obj)] = (obj, _ENABLEABLE_TAG)
+
+
+def _is_marked_enableable(obj: Any) -> bool:
+    """Return whether an object was explicitly branded as enableable."""
+    try:
+        if _enableable_objects.get(obj) is _ENABLEABLE_TAG:
+            return True
+    except TypeError:
+        pass
+
+    fallback_record = _enableable_objects_by_id.get(id(obj))
+    return fallback_record is not None and fallback_record[0] is obj
 
 
 class EnableableMeta(ABCMeta):
     """Metaclass enabling nominal isinstance checks for branded callables."""
 
     def __instancecheck__(cls, instance: Any) -> bool:  # type: ignore[override]
-        if getattr(instance, '__enableable_tag__', None) is _ENABLEABLE_TAG:
+        if _is_marked_enableable(instance):
             return True
         return super().__instancecheck__(instance)
 
@@ -72,8 +95,8 @@ def mark_enableable(obj: Any, *, enabled_default: bool = True) -> Any:
         sig = inspect.signature(obj)
         if ENABLED_FIELD not in sig.parameters:
             raise TypeError(
-                f"Enableable callable '{getattr(obj, '__name__', obj)}' must have an '{ENABLED_FIELD}' parameter"
+                f"Enableable callable {obj!r} must have an '{ENABLED_FIELD}' parameter"
             )
 
-    setattr(obj, '__enableable_tag__', _ENABLEABLE_TAG)
+    _remember_enableable(obj)
     return obj

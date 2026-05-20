@@ -19,10 +19,14 @@ from .signature_analyzer import (
     # Plugin registration
     register_namespace_provider,
     register_type_resolver,
+    set_signature_analysis_target,
+    signature_analysis_target,
 )
 from .unified_parameter_analyzer import (
     UnifiedParameterAnalyzer,
     UnifiedParameterInfo,
+    set_parameter_exclusions,
+    parameter_exclusions,
 )
 from .exceptions import (
     IntrospectionError,
@@ -48,9 +52,13 @@ __all__ = [
     # Plugin registration
     "register_namespace_provider",
     "register_type_resolver",
+    "set_signature_analysis_target",
+    "signature_analysis_target",
     # Unified analysis
     "UnifiedParameterAnalyzer",
     "UnifiedParameterInfo",
+    "set_parameter_exclusions",
+    "parameter_exclusions",
     # Exceptions
     "IntrospectionError",
     "SignatureAnalysisError",

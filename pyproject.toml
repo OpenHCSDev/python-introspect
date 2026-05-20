@@ -26,7 +26,9 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
-dependencies = []
+dependencies = [
+    "metaclass-registry>=0.1.0",
+]
 
 [project.optional-dependencies]
 dev = [

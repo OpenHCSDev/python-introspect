@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 from python_introspect import (
     UnifiedParameterAnalyzer,
     UnifiedParameterInfo,
+    set_parameter_exclusions,
 )
 
 
@@ -82,6 +83,20 @@ class TestUnifiedParameterAnalyzer:
         assert "b" not in params
         assert "c" not in params
 
+    def test_analyze_with_declared_hidden_parameters(self):
+        """Test analyzing with callable-owned hidden parameter declarations."""
+        def func(image, visible: int = 1, runtime_context=None):
+            pass
+
+        set_parameter_exclusions(func, ("runtime_context",))
+
+        analyzer = UnifiedParameterAnalyzer()
+        params = analyzer.analyze(func, exclude_params=["image"])
+
+        assert "visible" in params
+        assert "image" not in params
+        assert "runtime_context" not in params
+
     def test_analyze_class_constructor(self):
         """Test analyzing a class type."""
         class MyClass:
@@ -114,6 +129,40 @@ class TestUnifiedParameterAnalyzer:
 
         assert "x" in params
         assert "y" in params
+
+    def test_analyze_callable_object_prefers_declared_signature(self):
+        """Test callable objects can expose a public signature separate from __call__."""
+        import inspect
+
+        class CallableClass:
+            def __call__(self, runtime_context=None, **kwargs):
+                pass
+
+        obj = CallableClass()
+        obj.__signature__ = inspect.Signature(
+            parameters=[
+                inspect.Parameter("image", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+                inspect.Parameter(
+                    "visible",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=1,
+                    annotation=int,
+                ),
+                inspect.Parameter(
+                    "runtime_context",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=None,
+                ),
+            ]
+        )
+        set_parameter_exclusions(obj, ("runtime_context",))
+
+        analyzer = UnifiedParameterAnalyzer()
+        params = analyzer.analyze(obj, exclude_params=["image"])
+
+        assert "visible" in params
+        assert "image" not in params
+        assert "runtime_context" not in params
 
     def test_analyze_nested(self):
         """Test nested analysis for dataclass fields."""

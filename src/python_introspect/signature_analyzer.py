@@ -11,21 +11,27 @@ import ast
 import inspect
 import dataclasses
 import re
-from typing import Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type, List
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type, List, ClassVar, Tuple, get_args, get_origin
+from weakref import WeakKeyDictionary
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from metaclass_registry import AutoRegisterMeta
 
 # =============================================================================
 # PLUGIN REGISTRY - Allows frameworks to extend type resolution
 # =============================================================================
 
 # Namespace providers: functions that return Dict[str, Any] for get_type_hints()
-# Used to resolve forward references like "GlobalPipelineConfig" -> actual class
+# Used to resolve forward references supplied by host frameworks.
 _namespace_providers: List[Callable[[], Dict[str, Any]]] = []
 
 # Type resolvers: functions that map types to their "real" types
-# e.g., LazyWellFilterConfig -> WellFilterConfig
+# e.g., framework proxy types -> their public dataclass types
 _type_resolvers: List[Callable[[type], Optional[type]]] = []
+_signature_analysis_targets: WeakKeyDictionary[object, Callable] = WeakKeyDictionary()
+_signature_analysis_targets_by_id: Dict[int, tuple[object, Callable]] = {}
 
 
 def register_namespace_provider(provider: Callable[[], Dict[str, Any]]) -> None:
@@ -54,6 +60,34 @@ def register_type_resolver(resolver: Callable[[type], Optional[type]]) -> None:
         register_type_resolver(resolve_lazy)
     """
     _type_resolvers.append(resolver)
+
+
+def set_signature_analysis_target(wrapper: object, target: Callable) -> None:
+    """Declare the callable that should be inspected for wrapper parameters."""
+    if not callable(target):
+        raise TypeError(
+            "signature analysis target must be callable, "
+            f"got {type(target).__name__}."
+        )
+    try:
+        _signature_analysis_targets[wrapper] = target
+    except TypeError:
+        _signature_analysis_targets_by_id[id(wrapper)] = (wrapper, target)
+
+
+def signature_analysis_target(target: Callable) -> Callable:
+    """Return the callable that owns user-facing signature metadata."""
+    try:
+        projected = _signature_analysis_targets.get(target)
+    except TypeError:
+        projected = None
+    if projected is not None:
+        return projected
+
+    fallback_record = _signature_analysis_targets_by_id.get(id(target))
+    if fallback_record is not None and fallback_record[0] is target:
+        return fallback_record[1]
+    return target
 
 
 def _get_extended_namespace() -> Dict[str, Any]:
@@ -114,6 +148,254 @@ class DocstringInfo(NamedTuple):
         """Get parameters as a dict, never None."""
         return self.parameters if self.parameters is not None else {}
 
+
+@dataclass
+class DocstringParseState:
+    """Mutable parse state shared by docstring section handlers."""
+
+    summary: Optional[str] = None
+    description_lines: List[str] = field(default_factory=list)
+    parameters: Dict[str, str] = field(default_factory=dict)
+    returns: Optional[str] = None
+    examples: Optional[str] = None
+    current_param: Optional[str] = None
+    current_param_lines: List[str] = field(default_factory=list)
+
+    def finalize_current_param(self) -> None:
+        """Commit the active parameter description, if one is being parsed."""
+        if self.current_param and self.current_param_lines:
+            self.parameters[self.current_param] = (
+                "\n".join(self.current_param_lines).strip()
+            )
+
+    def reset_current_param(self) -> None:
+        """Clear parameter continuation state after a section transition."""
+        self.current_param = None
+        self.current_param_lines = []
+
+    def transition_to(self, section: "DocstringSection") -> "DocstringSection":
+        """Finalize parameter state before changing active section."""
+        self.finalize_current_param()
+        self.reset_current_param()
+        return section
+
+    def to_info(self) -> DocstringInfo:
+        """Build the immutable public docstring projection."""
+        self.finalize_current_param()
+        description = "\n".join(self.description_lines).strip()
+        if description == self.summary or description == "":
+            description = None
+        if any((self.summary, description, self.parameters, self.returns, self.examples)):
+            return DocstringInfo(
+                summary=self.summary,
+                description=description,
+                parameters=self.parameters if self.parameters else {},
+                returns=self.returns,
+                examples=self.examples,
+            )
+        return DocstringInfo(parameters={})
+
+
+class DocstringSection(ABC, metaclass=AutoRegisterMeta):
+    """Nominal docstring section family used by the parser orchestration."""
+
+    __registry_key__ = "section_name"
+    __skip_if_no_key__ = True
+
+    section_name: ClassVar[Optional[str]] = None
+    colon_headers: ClassVar[Tuple[str, ...]] = ()
+    numpy_headers: ClassVar[Tuple[str, ...]] = ()
+
+    @classmethod
+    def initial(cls) -> "DocstringSection":
+        """Return the starting section for a docstring."""
+        return cls.__registry__[DescriptionDocstringSection.section_name]()
+
+    @classmethod
+    def section_for_header(
+        cls,
+        line: str,
+        next_line: Optional[str],
+    ) -> Optional["DocstringSection"]:
+        """Return the section selected by this line, if it is a header."""
+        normalized = line.lower()
+        numpy_separator_follows = (
+            next_line is not None and next_line.strip().startswith("-")
+        )
+        for section_cls in cls.__registry__.values():
+            section = section_cls()
+            if normalized in section.colon_headers:
+                return section
+            if numpy_separator_follows and normalized in section.numpy_headers:
+                return section
+        return None
+
+    @abstractmethod
+    def consume(
+        self,
+        state: DocstringParseState,
+        original_line: str,
+        line: str,
+    ) -> None:
+        """Consume a non-header line inside this section."""
+
+
+class DescriptionDocstringSection(DocstringSection):
+    """Free-form summary and description text."""
+
+    section_name = "description"
+
+    def consume(
+        self,
+        state: DocstringParseState,
+        original_line: str,
+        line: str,
+    ) -> None:
+        if not state.summary and line:
+            state.summary = line
+        else:
+            state.description_lines.append(original_line)
+
+
+class ParametersDocstringSection(DocstringSection):
+    """Parameter definition section."""
+
+    section_name = "parameters"
+    colon_headers = ("args:", "arguments:", "parameters:")
+    numpy_headers = ("args", "arguments", "parameters")
+
+    def consume(
+        self,
+        state: DocstringParseState,
+        original_line: str,
+        line: str,
+    ) -> None:
+        param_match_google = re.match(r"^(\w+):\s*(.+)", line)
+        param_match_sphinx = re.match(r"^:param\s+(\w+):\s*(.+)", line)
+        param_match_numpy = re.match(r"^(\w+)\s*:\s*(.+)", line)
+        param_match_inline = re.match(
+            r"^(\w+):\s*(\w+(?:\[.*?\])?|\w+(?:\s*\|\s*\w+)*)\s+(.+)",
+            line,
+        )
+        param_match_bullet = re.match(r"^[-•*]\s*(\w+):\s*(.+)", line)
+
+        if (
+            param_match_google
+            or param_match_sphinx
+            or param_match_numpy
+            or param_match_inline
+            or param_match_bullet
+        ):
+            state.finalize_current_param()
+
+            if param_match_google:
+                param_name, param_desc = param_match_google.groups()
+            elif param_match_sphinx:
+                param_name, param_desc = param_match_sphinx.groups()
+            elif param_match_numpy:
+                param_name, param_desc = param_match_numpy.groups()
+            elif param_match_inline:
+                param_name, param_type, param_desc = param_match_inline.groups()
+                param_desc = f"{param_type} - {param_desc}"
+            else:
+                param_name, param_desc = param_match_bullet.groups()
+
+            state.current_param = param_name
+            state.current_param_lines = [param_desc.strip()]
+        elif state.current_param and (
+            original_line.startswith("    ") or original_line.startswith("\t")
+        ):
+            state.current_param_lines.append(line)
+        elif not line:
+            state.finalize_current_param()
+            state.reset_current_param()
+        elif state.current_param:
+            state.current_param_lines.append(line)
+        else:
+            state.parameters.update(DocstringExtractor._parse_inline_parameters(line))
+
+
+class ReturnsDocstringSection(DocstringSection):
+    """Return value section."""
+
+    section_name = "returns"
+    colon_headers = ("returns:", "return:")
+    numpy_headers = ("returns", "return")
+
+    def consume(
+        self,
+        state: DocstringParseState,
+        original_line: str,
+        line: str,
+    ) -> None:
+        if state.returns is None:
+            state.returns = line
+        else:
+            state.returns += "\n" + line
+
+
+class ExamplesDocstringSection(DocstringSection):
+    """Example usage section."""
+
+    section_name = "examples"
+    colon_headers = ("examples:", "example:")
+    numpy_headers = ("examples", "example")
+
+    def consume(
+        self,
+        state: DocstringParseState,
+        original_line: str,
+        line: str,
+    ) -> None:
+        if state.examples is None:
+            state.examples = line
+        else:
+            state.examples += "\n" + line
+
+
+class ParameterSkipPolicy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal policy family for parameters excluded from public analysis."""
+
+    __registry_key__ = "policy_name"
+    __skip_if_no_key__ = True
+
+    policy_name: ClassVar[Optional[str]] = None
+
+    @classmethod
+    def should_skip(cls, param_name: str) -> bool:
+        """Return whether any registered policy excludes this parameter."""
+        return any(policy_cls().matches(param_name) for policy_cls in cls.__registry__.values())
+
+    @abstractmethod
+    def matches(self, param_name: str) -> bool:
+        """Return whether this policy excludes a parameter name."""
+
+
+class BoundReceiverParameterSkipPolicy(ParameterSkipPolicy):
+    """Skip implicit instance/class receiver parameters."""
+
+    policy_name = "bound_receiver"
+    receiver_names: ClassVar[Tuple[str, ...]] = (
+        CONSTANTS.SELF_PARAM,
+        CONSTANTS.CLS_PARAM,
+    )
+
+    def matches(self, param_name: str) -> bool:
+        return param_name in self.receiver_names
+
+
+class DunderParameterSkipPolicy(ParameterSkipPolicy):
+    """Skip reserved dunder parameters."""
+
+    policy_name = "dunder"
+
+    def matches(self, param_name: str) -> bool:
+        return (
+            param_name.startswith(CONSTANTS.DUNDER_PREFIX)
+            and param_name.endswith(CONSTANTS.DUNDER_SUFFIX)
+        )
+
+
 class DocstringExtractor:
     """Extract structured information from docstrings."""
 
@@ -152,13 +434,13 @@ class DocstringExtractor:
         This method attempts to find the original base class that the lazy class
         was created from.
         """
-        if not hasattr(target, '__name__'):
+        if not inspect.isclass(target):
             return target
 
         # Check if this looks like a lazy dataclass (starts with "Lazy")
         if target.__name__.startswith('Lazy'):
             # Try to find the base class in the MRO
-            for base in getattr(target, '__mro__', []):
+            for base in inspect.getmro(target):
                 if base != target and base.__name__ != 'object':
                     # Found a base class that's not the lazy class itself
                     if not base.__name__.startswith('Lazy'):
@@ -212,152 +494,27 @@ class DocstringExtractor:
         until a blank line or new parameter/section is encountered.
         """
         lines = docstring.strip().split('\n')
+        state = DocstringParseState()
+        current_section = DocstringSection.initial()
 
-        summary = None
-        description_lines = []
-        parameters = {}
-        returns = None
-        examples = None
-
-        current_section = 'description'
-        current_param = None
-        current_param_lines = []
-
-        def _finalize_current_param():
-            """Finalize the current parameter description."""
-            if current_param and current_param_lines:
-                param_desc = '\n'.join(current_param_lines).strip()
-                parameters[current_param] = param_desc
-            
-        for i, line in enumerate(lines):
-            original_line = line
-            line = line.strip()
-
-            # Handle both Google/Sphinx style (with colons) and NumPy style (without colons)
-            if line.lower() in ('args:', 'arguments:', 'parameters:'):
-                _finalize_current_param()
-                current_param = None
-                current_param_lines = []
-                current_section = 'parameters'
-                if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
-                    continue
-                continue
-            elif line.lower() in ('args', 'arguments', 'parameters') and i + 1 < len(lines) and lines[i+1].strip().startswith('-'):
-                # NumPy-style section headers (without colons, followed by dashes)
-                _finalize_current_param()
-                current_param = None
-                current_param_lines = []
-                current_section = 'parameters'
-                continue
-            elif line.lower() in ('returns:', 'return:'):
-                _finalize_current_param()
-                current_param = None
-                current_param_lines = []
-                current_section = 'returns'
-                if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
-                    continue
-                continue
-            elif line.lower() in ('returns', 'return') and i + 1 < len(lines) and lines[i+1].strip().startswith('-'):
-                # NumPy-style returns section
-                _finalize_current_param()
-                current_param = None
-                current_param_lines = []
-                current_section = 'returns'
-                continue
-            elif line.lower() in ('examples:', 'example:'):
-                _finalize_current_param()
-                current_param = None
-                current_param_lines = []
-                current_section = 'examples'
-                if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
-                    continue
-                continue
-            elif line.lower() in ('examples', 'example') and i + 1 < len(lines) and lines[i+1].strip().startswith('-'):
-                # NumPy-style examples section
-                _finalize_current_param()
-                current_param = None
-                current_param_lines = []
-                current_section = 'examples'
+        for i, line_value in enumerate(lines):
+            next_line = lines[i + 1] if i + 1 < len(lines) else None
+            header_section = DocstringSection.section_for_header(
+                line_value.strip(),
+                next_line,
+            )
+            if header_section is not None:
+                current_section = state.transition_to(header_section)
                 continue
 
-            if current_section == 'description':
-                if not summary and line:
-                    summary = line
-                else:
-                    description_lines.append(original_line) # Keep original indentation
+            if line_value.strip().startswith("---"):
+                continue
 
-            elif current_section == 'parameters':
-                # Enhanced parameter parsing to handle multiple formats
-                param_match_google = re.match(r'^(\w+):\s*(.+)', line)
-                param_match_sphinx = re.match(r'^:param\s+(\w+):\s*(.+)', line)
-                param_match_numpy = re.match(r'^(\w+)\s*:\s*(.+)', line)
-                # New: Handle pyclesperanto-style inline parameters (param_name: type description)
-                param_match_inline = re.match(r'^(\w+):\s*(\w+(?:\[.*?\])?|\w+(?:\s*\|\s*\w+)*)\s+(.+)', line)
-                # New: Handle parameters that start with bullet points or dashes
-                param_match_bullet = re.match(r'^[-•*]\s*(\w+):\s*(.+)', line)
+            original_line = line_value
+            line = line_value.strip()
+            current_section.consume(state, original_line, line)
 
-                if param_match_google or param_match_sphinx or param_match_numpy or param_match_inline or param_match_bullet:
-                    _finalize_current_param()
-
-                    if param_match_google:
-                        param_name, param_desc = param_match_google.groups()
-                    elif param_match_sphinx:
-                        param_name, param_desc = param_match_sphinx.groups()
-                    elif param_match_numpy:
-                        param_name, param_desc = param_match_numpy.groups()
-                    elif param_match_inline:
-                        param_name, param_type, param_desc = param_match_inline.groups()
-                        param_desc = f"{param_type} - {param_desc}"  # Include type in description
-                    elif param_match_bullet:
-                        param_name, param_desc = param_match_bullet.groups()
-
-                    current_param = param_name
-                    current_param_lines = [param_desc.strip()]
-                elif current_param and (original_line.startswith('    ') or original_line.startswith('\t')):
-                    # Indented continuation line
-                    current_param_lines.append(line)
-                elif not line:
-                    _finalize_current_param()
-                    current_param = None
-                    current_param_lines = []
-                elif current_param:
-                    # Non-indented continuation line (part of the same block)
-                    current_param_lines.append(line)
-                else:
-                    # Try to parse inline parameter definitions in a single block
-                    # This handles cases where parameters are listed without clear separation
-                    inline_params = DocstringExtractor._parse_inline_parameters(line)
-                    for param_name, param_desc in inline_params.items():
-                        parameters[param_name] = param_desc
-            
-            elif current_section == 'returns':
-                if returns is None:
-                    returns = line
-                else:
-                    returns += '\n' + line
-            
-            elif current_section == 'examples':
-                if examples is None:
-                    examples = line
-                else:
-                    examples += '\n' + line
-
-        _finalize_current_param()
-
-        description = '\n'.join(description_lines).strip()
-        if description == summary:
-            description = None
-        # Treat empty string as None for cleaner API
-        if description == '':
-            description = None
-
-        return DocstringInfo(
-            summary=summary,
-            description=description,
-            parameters=parameters if parameters else {},  # Always return dict, never None
-            returns=returns,
-            examples=examples
-        ) if summary or description or parameters or returns or examples else DocstringInfo(parameters={})
+        return state.to_info()
 
     @staticmethod
     def _parse_inline_parameters(line: str) -> Dict[str, str]:
@@ -383,6 +540,149 @@ class DocstringExtractor:
                 parameters[param_name] = clean_desc
 
         return parameters
+
+
+class OriginalParameterSource(ABC, metaclass=AutoRegisterMeta):
+    """Nominal source family for recovering wrapper-owned original parameters."""
+
+    __registry_key__ = "source_name"
+    __skip_if_no_key__ = True
+
+    source_name: ClassVar[Optional[str]] = None
+
+    @classmethod
+    def extract_for(cls, callable_obj: Callable) -> Dict[str, ParameterInfo]:
+        """Return original parameters from the first source that can recover them."""
+        for source_cls in cls.__registry__.values():
+            params = source_cls().extract(callable_obj)
+            if params:
+                return params
+        return {}
+
+    @abstractmethod
+    def extract(self, callable_obj: Callable) -> Optional[Dict[str, ParameterInfo]]:
+        """Return recovered parameters, or None if this source does not apply."""
+
+
+class DeclaredSignatureAnalysisTargetSource(OriginalParameterSource):
+    """Recover parameters from an explicit signature-analysis target."""
+
+    source_name = "declared_signature_analysis_target"
+
+    def extract(self, callable_obj: Callable) -> Optional[Dict[str, ParameterInfo]]:
+        projected = signature_analysis_target(callable_obj)
+        if projected is callable_obj:
+            return None
+        return EnableableParameterOverlay(
+            owner=callable_obj,
+            parameters=SignatureAnalyzer._analyze_callable(projected),
+        ).parameters_with_owner_fields()
+
+
+@dataclass(frozen=True)
+class EnableableParameterOverlay:
+    """Overlay nominal enableable parameters owned by a wrapper callable."""
+
+    owner: Callable
+    parameters: Dict[str, ParameterInfo]
+
+    def parameters_with_owner_fields(self) -> Dict[str, ParameterInfo]:
+        from python_introspect.enableable import ENABLED_FIELD, is_enableable
+
+        if not is_enableable(self.owner) or ENABLED_FIELD in self.parameters:
+            return self.parameters
+        return {
+            **self.parameters,
+            ENABLED_FIELD: ParameterInfo(
+                name=ENABLED_FIELD,
+                param_type=bool,
+                default_value=True,
+                is_required=False,
+                description=None,
+            ),
+        }
+
+
+class WrappedCallableParameterSource(OriginalParameterSource):
+    """Recover parameters from functools-style wrapped callables."""
+
+    source_name = "wrapped_callable"
+
+    def extract(self, callable_obj: Callable) -> Optional[Dict[str, ParameterInfo]]:
+        unwrapped = inspect.unwrap(callable_obj)
+        if unwrapped is callable_obj:
+            return None
+        return SignatureAnalyzer._analyze_callable(unwrapped)
+
+
+class ClosureCallableParameterSource(OriginalParameterSource):
+    """Recover parameters from non-variadic callables captured in closures."""
+
+    source_name = "closure_callable"
+
+    def extract(self, callable_obj: Callable) -> Optional[Dict[str, ParameterInfo]]:
+        if not inspect.isfunction(callable_obj) or not callable_obj.__closure__:
+            return None
+        for cell in callable_obj.__closure__:
+            candidate = cell.cell_contents
+            if not callable(candidate):
+                continue
+            try:
+                candidate_sig = inspect.signature(candidate)
+            except Exception:
+                continue
+            if any(
+                param.kind == inspect.Parameter.VAR_KEYWORD
+                for param in candidate_sig.parameters.values()
+            ):
+                continue
+            return SignatureAnalyzer._analyze_callable(candidate)
+        return None
+
+
+@dataclass(frozen=True)
+class CallableAnalysisContext:
+    """Authoritative callable analysis projection for signature extraction."""
+
+    target: Callable
+    signature: inspect.Signature
+    globalns: Dict[str, Any]
+    annotations: Dict[str, Any]
+    display_name: str
+
+    @classmethod
+    def from_callable(cls, callable_obj: Callable) -> "CallableAnalysisContext":
+        """Create the public analysis context for a callable."""
+        target = signature_analysis_target(callable_obj)
+        extended_ns = _get_extended_namespace()
+        module = inspect.getmodule(target)
+        if module is not None:
+            globalns = {**extended_ns, **vars(module)}
+        elif inspect.isfunction(target):
+            globalns = {**extended_ns, **target.__globals__}
+        else:
+            globalns = extended_ns
+
+        return cls(
+            target=target,
+            signature=inspect.signature(target),
+            globalns=globalns,
+            annotations=inspect.get_annotations(target, eval_str=False),
+            display_name=cls.display_name_for(target),
+        )
+
+    @staticmethod
+    def display_name_for(target: Callable) -> str:
+        """Return a stable human-readable callable name without structural probes."""
+        if inspect.isfunction(target) or inspect.ismethod(target):
+            return target.__qualname__
+        if inspect.isclass(target):
+            return target.__qualname__
+        return type(target).__name__
+
+    def type_hints(self) -> Dict[str, Any]:
+        """Resolve type hints using the context-owned namespace."""
+        return get_type_hints(self.target, globalns=self.globalns)
 
 
 class SignatureAnalyzer:
@@ -434,53 +734,25 @@ class SignatureAnalyzer:
             skip_first_param: Whether to skip the first parameter (after self/cls).
                             If None, auto-detects based on context.
         """
-        sig = inspect.signature(callable_obj)
-        # Build comprehensive namespace for forward reference resolution
-        # Start with registered namespace providers, then add function's globals
-        extended_ns = _get_extended_namespace()
-        globalns = {
-            **extended_ns,
-            **getattr(callable_obj, '__globals__', {})
-        }
-
-        # Prioritize the function's actual module globals for type resolution
-        if hasattr(callable_obj, '__module__') and callable_obj.__module__:
-            try:
-                import sys
-                actual_module = sys.modules.get(callable_obj.__module__)
-                if actual_module:
-                    # Function's module globals should take precedence for type resolution
-                    globalns = {
-                        **extended_ns,
-                        **vars(actual_module)  # This overwrites with the actual module types
-                    }
-            except Exception:
-                pass  # Fall back to original globalns
+        analysis_owner = callable_obj
+        context = CallableAnalysisContext.from_callable(callable_obj)
+        callable_obj = context.target
+        sig = context.signature
 
         import logging
         logger = logging.getLogger(__name__)
+        callable_name = context.display_name
 
         try:
-            type_hints = get_type_hints(callable_obj, globalns=globalns)
-            logger.debug(f"🔍 SIG ANALYZER: get_type_hints succeeded for {callable_obj.__name__}: {type_hints}")
-        except (NameError, AttributeError) as e:
-            # If type hint resolution fails, try with just the function's original globals
-            try:
-                type_hints = get_type_hints(callable_obj, globalns=getattr(callable_obj, '__globals__', {}))
-                logger.debug(f"🔍 SIG ANALYZER: get_type_hints with __globals__ succeeded for {callable_obj.__name__}: {type_hints}")
-            except:
-                # If that still fails, fall back to __annotations__ directly
-                # This is critical for functions where type hints were added via docstring parsing
-                # (e.g., cucim functions where _enhance_annotations_from_docstring added types)
-                type_hints = getattr(callable_obj, '__annotations__', {})
-                logger.debug(f"🔍 SIG ANALYZER: Fell back to __annotations__ for {callable_obj.__name__}: {type_hints}")
+            type_hints = context.type_hints()
+            logger.debug(f"🔍 SIG ANALYZER: get_type_hints succeeded for {callable_name}: {type_hints}")
+        except (NameError, AttributeError):
+            type_hints = context.annotations
+            logger.debug(f"🔍 SIG ANALYZER: Fell back to annotations for {callable_name}: {type_hints}")
         except Exception as ex:
-            # For any other type hint resolution errors, fall back to __annotations__
-            # This ensures we don't lose type information that was added programmatically
-            type_hints = getattr(callable_obj, '__annotations__', {})
-            logger.debug(f"🔍 SIG ANALYZER: Exception {ex}, fell back to __annotations__ for {callable_obj.__name__}: {type_hints}")
-
-
+            # For any other type hint resolution errors, fall back to annotations.
+            type_hints = context.annotations
+            logger.debug(f"🔍 SIG ANALYZER: Exception {ex}, fell back to __annotations__ for {callable_name}: {type_hints}")
 
         # Extract docstring information (with fallback for robustness)
         try:
@@ -503,12 +775,7 @@ class SignatureAnalyzer:
         first_param_after_self_skipped = False
 
         for i, (param_name, param) in enumerate(param_list):
-            # Always skip self/cls
-            if param_name in (CONSTANTS.SELF_PARAM, CONSTANTS.CLS_PARAM):
-                continue
-
-            # Always skip dunder parameters (internal/reserved fields)
-            if param_name.startswith(CONSTANTS.DUNDER_PREFIX) and param_name.endswith(CONSTANTS.DUNDER_SUFFIX):
+            if ParameterSkipPolicy.should_skip(param_name):
                 continue
 
             # Skip first parameter for image processing functions only
@@ -525,11 +792,15 @@ class SignatureAnalyzer:
                 continue 
 
             from typing import Any
-            param_type = type_hints.get(param_name, Any)
+            param_type = type_hints.get(param_name)
+            if param_type is None:
+                param_type = (
+                    param.annotation
+                    if param.annotation is not inspect.Parameter.empty
+                    else Any
+                )
             default_value = param.default if param.default != inspect.Parameter.empty else None
             is_required = param.default == inspect.Parameter.empty
-
-
 
             # Get parameter description from docstring
             param_description = (
@@ -546,7 +817,10 @@ class SignatureAnalyzer:
                 description=param_description
             )
 
-        return parameters
+        return EnableableParameterOverlay(
+            owner=analysis_owner,
+            parameters=parameters,
+        ).parameters_with_owner_fields()
 
     @staticmethod
     def _should_skip_first_parameter(callable_obj: Callable) -> bool:
@@ -570,59 +844,11 @@ class SignatureAnalyzer:
         """
         Extract parameters from the original function if this is a wrapper with **kwargs.
 
-        This handles cases where scikit-image or other auto-registered functions
-        are wrapped with (image, **kwargs) signatures.
+        This handles wrappers with explicit metadata, functools wrapping, or
+        closure-owned original callables.
         """
         try:
-            # Check if this function has access to the original function
-            # Common patterns: __wrapped__, closure variables, etc.
-
-            # Pattern 1: Check if it's a functools.wraps wrapper
-            if hasattr(callable_obj, '__wrapped__'):
-                return SignatureAnalyzer._analyze_callable(callable_obj.__wrapped__)
-
-            # Pattern 2: Check closure for original function reference
-            if hasattr(callable_obj, '__closure__') and callable_obj.__closure__:
-                for cell in callable_obj.__closure__:
-                    if hasattr(cell.cell_contents, '__call__'):
-                        # Found a callable in closure - might be the original function
-                        try:
-                            orig_sig = inspect.signature(cell.cell_contents)
-                            # Skip if it also has **kwargs (avoid infinite recursion)
-                            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in orig_sig.parameters.values()):
-                                continue
-                            return SignatureAnalyzer._analyze_callable(cell.cell_contents)
-                        except:
-                            continue
-
-            # Pattern 3: Try to extract from function name and module
-            # This is a fallback for scikit-image functions
-            if hasattr(callable_obj, '__name__') and hasattr(callable_obj, '__module__'):
-                func_name = callable_obj.__name__
-                module_name = callable_obj.__module__
-
-                # Try to find the original function in scikit-image
-                if 'skimage' in module_name:
-                    try:
-                        import importlib
-                        # Extract the actual module path (remove wrapper module parts)
-                        if 'scikit_image_registry' in module_name:
-                            # This is our wrapper, try to find the original in skimage
-                            for skimage_module in ['skimage.filters', 'skimage.morphology',
-                                                 'skimage.segmentation', 'skimage.feature',
-                                                 'skimage.measure', 'skimage.transform',
-                                                 'skimage.restoration', 'skimage.exposure']:
-                                try:
-                                    mod = importlib.import_module(skimage_module)
-                                    if hasattr(mod, func_name):
-                                        orig_func = getattr(mod, func_name)
-                                        return SignatureAnalyzer._analyze_callable(orig_func)
-                                except:
-                                    continue
-                    except:
-                        pass
-
-            return {}
+            return OriginalParameterSource.extract_for(callable_obj)
 
         except Exception:
             return {}
@@ -647,8 +873,7 @@ class SignatureAnalyzer:
             try:
                 type_hints = get_type_hints(dataclass_type)
             except Exception:
-                # Fall back to __annotations__ for robustness
-                type_hints = getattr(dataclass_type, '__annotations__', {})
+                type_hints = inspect.get_annotations(dataclass_type, eval_str=False)
 
             # Extract docstring information from dataclass
             docstring_info = DocstringExtractor.extract(dataclass_type)
@@ -656,7 +881,7 @@ class SignatureAnalyzer:
             # Extract inline field documentation using AST
             inline_docs = SignatureAnalyzer._extract_inline_field_docs(dataclass_type)
 
-            # ENHANCEMENT: For dataclasses modified by decorators (like GlobalPipelineConfig),
+            # ENHANCEMENT: For dataclasses modified by decorators,
             # also extract field documentation from the field types themselves
             field_type_docs = SignatureAnalyzer._extract_field_type_docs(dataclass_type)
 
@@ -684,7 +909,7 @@ class SignatureAnalyzer:
                 field_description = None
 
                 # 1. Field metadata (highest priority)
-                if hasattr(field, 'metadata') and 'description' in field.metadata:
+                if 'description' in field.metadata:
                     field_description = field.metadata['description']
                 # 2. Inline documentation strings (from AST parsing)
                 elif field.name in inline_docs:
@@ -750,43 +975,11 @@ class SignatureAnalyzer:
             try:
                 source = inspect.getsource(dataclass_type)
             except (OSError, TypeError):
-                # ENHANCEMENT: For decorator-modified classes, try multiple source file strategies
                 try:
-                    # Strategy 1: Try the file where the class is currently defined
                     source_file = inspect.getfile(dataclass_type)
                     with open(source_file, 'r', encoding='utf-8') as f:
                         file_content = f.read()
                     source = SignatureAnalyzer._extract_class_source_from_file(file_content, dataclass_type.__name__)
-
-                    # Strategy 2: If that fails, try to find the original source file
-                    # This handles decorator-modified classes where inspect.getfile() returns the wrong file
-                    if not source:
-                        try:
-                            import os
-                            source_dir = os.path.dirname(source_file)
-
-                            # Try common source files in the same directory
-                            candidate_files = []
-
-                            # If the current file is lazy_config.py, try config.py
-                            if source_file.endswith('lazy_config.py'):
-                                candidate_files.append(os.path.join(source_dir, 'config.py'))
-
-                            # Try other common patterns
-                            for filename in os.listdir(source_dir):
-                                if filename.endswith('.py') and filename != os.path.basename(source_file):
-                                    candidate_files.append(os.path.join(source_dir, filename))
-
-                            # Try each candidate file
-                            for candidate_file in candidate_files:
-                                if os.path.exists(candidate_file):
-                                    with open(candidate_file, 'r', encoding='utf-8') as f:
-                                        candidate_content = f.read()
-                                    source = SignatureAnalyzer._extract_class_source_from_file(candidate_content, dataclass_type.__name__)
-                                    if source:  # Found it!
-                                        break
-                        except Exception:
-                            pass
                 except Exception:
                     pass
 
@@ -807,11 +1000,6 @@ class SignatureAnalyzer:
                         class_node = node
                         break
                     # Also try without common prefixes/suffixes that decorators might add
-                    base_name = target_class_name.replace('Lazy', '').replace('Config', '')
-                    node_base_name = node.name.replace('Lazy', '').replace('Config', '')
-                    if base_name and node_base_name and base_name == node_base_name:
-                        class_node = node
-                        break
 
             if not class_node:
                 return {}
@@ -821,19 +1009,15 @@ class SignatureAnalyzer:
 
             # Method 1: Look for field assignments followed by string literals (next line)
             for i, node in enumerate(class_node.body):
-                if isinstance(node, ast.AnnAssign) and hasattr(node.target, 'id'):
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                     field_name = node.target.id
 
                     # Check if the next node is a string literal (documentation)
                     if i + 1 < len(class_node.body):
                         next_node = class_node.body[i + 1]
                         if isinstance(next_node, ast.Expr):
-                            # Handle both ast.Constant (Python 3.8+) and ast.Str (older versions)
                             if isinstance(next_node.value, ast.Constant) and isinstance(next_node.value.value, str):
                                 field_docs[field_name] = next_node.value.value.strip()
-                                continue
-                            elif hasattr(ast, 'Str') and isinstance(next_node.value, ast.Str):
-                                field_docs[field_name] = next_node.value.s.strip()
                                 continue
 
                     # Method 2: Check for inline comments on the same line
@@ -872,9 +1056,8 @@ class SignatureAnalyzer:
         won't find documentation for the injected fields, so we need to extract documentation from
         the field types themselves.
 
-        For example, GlobalPipelineConfig has injected fields like 'path_planning_config' of type
-        PathPlanningConfig. We extract the class docstring from PathPlanningConfig to use as the
-        field description.
+        For example, a decorated config may inject a field whose type is another
+        dataclass. We extract that dataclass docstring for the field description.
         """
         try:
             import dataclasses
@@ -892,9 +1075,9 @@ class SignatureAnalyzer:
                 field_type = field.type
 
                 # Handle Optional types
-                if hasattr(field_type, '__origin__') and field_type.__origin__ is Union:
+                if get_origin(field_type) is Union:
                     # Extract the non-None type from Optional[T]
-                    args = field_type.__args__
+                    args = get_args(field_type)
                     non_none_types = [arg for arg in args if arg is not type(None)]
                     if len(non_none_types) == 1:
                         field_type = non_none_types[0]
@@ -988,7 +1171,7 @@ class SignatureAnalyzer:
                 return None
 
             # ENHANCEMENT: Resolve lazy dataclasses to their base classes
-            # PipelineConfig should resolve to GlobalPipelineConfig for documentation
+            # Frameworks can register explicit proxy-to-public type resolvers.
             resolved_type = SignatureAnalyzer._resolve_lazy_dataclass_for_docs(dataclass_type)
 
             # Check cache first for performance
@@ -1024,31 +1207,6 @@ class SignatureAnalyzer:
             resolved = _resolve_type(dataclass_type)
             if resolved is not dataclass_type:
                 return resolved
-
-            # Fallback heuristics for common patterns (framework-agnostic)
-            class_name = dataclass_type.__name__
-
-            # Handle LazyXxxConfig -> XxxConfig by looking in same module
-            if class_name.startswith('Lazy') and class_name.endswith('Config'):
-                try:
-                    base_class_name = class_name[4:]  # Remove 'Lazy' prefix
-                    module = __import__(dataclass_type.__module__, fromlist=[base_class_name])
-                    if hasattr(module, base_class_name):
-                        return getattr(module, base_class_name)
-                except (ImportError, AttributeError):
-                    pass
-
-            # Try to find GlobalXxxConfig version in same module
-            if not class_name.startswith('Global') and class_name.endswith('Config'):
-                try:
-                    global_class_name = f'Global{class_name}'
-                    module = __import__(dataclass_type.__module__, fromlist=[global_class_name])
-                    if hasattr(module, global_class_name):
-                        return getattr(module, global_class_name)
-                except (ImportError, AttributeError):
-                    pass
-
-            # If no resolution found, return the original type
             return dataclass_type
 
         except Exception:
@@ -1092,14 +1250,14 @@ class SignatureAnalyzer:
             fields = dataclasses.fields(dataclass_type)
             for field in fields:
                 if field.name not in all_docs:  # Don't overwrite previous docs
-                    if hasattr(field, 'metadata') and 'description' in field.metadata:
+                    if 'description' in field.metadata:
                         all_docs[field.name] = field.metadata['description']
 
             # ENHANCEMENT: Try inheritance - check parent classes for missing field documentation
             for field in fields:
                 if field.name not in all_docs:  # Only for fields still missing documentation
                     # Walk up the inheritance chain
-                    for base_class in dataclass_type.__mro__[1:]:  # Skip the class itself
+                    for base_class in inspect.getmro(dataclass_type)[1:]:
                         if base_class == object:
                             continue
                         if dataclasses.is_dataclass(base_class):
@@ -1150,25 +1308,15 @@ class SignatureAnalyzer:
             dataclass_type = type(instance)
             parameters = SignatureAnalyzer._analyze_dataclass(dataclass_type)
 
-            # Update default values with current instance values
-            # CRITICAL: Always use object.__getattribute__ to bypass __getattribute__ overrides
-            # This ensures we get the raw stored value, not a resolved/computed value
             for name, param_info in parameters.items():
-                try:
-                    # Bypass __getattribute__ to get raw stored value (not resolved)
-                    current_value = object.__getattribute__(instance, name)
-
-                    # Create new ParameterInfo with current value as default
-                    parameters[name] = ParameterInfo(
-                        name=param_info.name,
-                        param_type=param_info.param_type,
-                        default_value=current_value,
-                        is_required=param_info.is_required,
-                        description=param_info.description
-                    )
-                except AttributeError:
-                    # Field doesn't exist on instance, keep signature default
-                    pass
+                current_value = object.__getattribute__(instance, name)
+                parameters[name] = ParameterInfo(
+                    name=param_info.name,
+                    param_type=param_info.param_type,
+                    default_value=current_value,
+                    is_required=param_info.is_required,
+                    description=param_info.description
+                )
 
             return parameters
 
