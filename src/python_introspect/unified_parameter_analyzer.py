@@ -302,15 +302,10 @@ class UnifiedParameterAnalyzer:
                 # Add parameters that haven't been seen yet (most specific wins)
                 for param_name, param_info in class_params.items():
                     if param_name not in all_params and param_name != 'kwargs':
-                        instance_values = vars(instance)
-                        default_value = instance_values.get(
-                            param_name,
-                            param_info.default_value,
-                        )
                         all_params[param_name] = UnifiedParameterInfo(
                             name=param_name,
                             param_type=param_info.param_type,
-                            default_value=default_value,
+                            default_value=param_info.default_value,
                             is_required=param_info.is_required,
                             description=param_info.description,
                             source_type="object_instance"

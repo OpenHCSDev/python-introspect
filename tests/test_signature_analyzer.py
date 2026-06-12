@@ -136,8 +136,8 @@ class TestSignatureAnalyzer:
         analyzer = SignatureAnalyzer()
         params = analyzer.analyze(instance)
 
-        assert params["name"].default_value == "custom"
-        assert params["value"].default_value == 42
+        assert params["name"].default_value == "default"
+        assert params["value"].default_value == 10
 
     def test_analyze_method(self):
         """Test analyzing class methods."""

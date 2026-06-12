@@ -67,8 +67,8 @@ class TestUnifiedParameterAnalyzer:
         analyzer = UnifiedParameterAnalyzer()
         params = analyzer.analyze(instance)
 
-        assert params["name"].default_value == "custom"
-        assert params["value"].default_value == 42
+        assert params["name"].default_value == "default"
+        assert params["value"].default_value == 10
         assert params["name"].source_type == "dataclass_instance"
 
     def test_analyze_with_exclusions(self):
@@ -320,9 +320,10 @@ class TestObjectInstanceAnalysis:
         # Should get parameters from __init__
         assert "name" in params
         assert "value" in params
-        # Instance values should be used
-        assert params["name"].default_value == "test"
-        assert params["value"].default_value == 20
+        # Constructor defaults remain the default authority; instance values are
+        # current state owned by callers such as ObjectState, not defaults.
+        assert params["name"].default_value is None
+        assert params["value"].default_value == 10
 
     def test_analyze_inherited_parameters(self):
         """Test analyzing object with inherited parameters."""

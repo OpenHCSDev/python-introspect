@@ -1302,23 +1302,13 @@ class SignatureAnalyzer:
 
     @staticmethod
     def _analyze_dataclass_instance(instance: object) -> Dict[str, ParameterInfo]:
-        """Extract parameter information from a dataclass instance."""
+        """Extract parameter information from a dataclass instance.
+
+        Defaults come from the dataclass type, not from current instance values.
+        Instance values are caller-owned current state, not signature defaults.
+        """
         try:
-            # Get the type and analyze it
-            dataclass_type = type(instance)
-            parameters = SignatureAnalyzer._analyze_dataclass(dataclass_type)
-
-            for name, param_info in parameters.items():
-                current_value = object.__getattribute__(instance, name)
-                parameters[name] = ParameterInfo(
-                    name=param_info.name,
-                    param_type=param_info.param_type,
-                    default_value=current_value,
-                    is_required=param_info.is_required,
-                    description=param_info.description
-                )
-
-            return parameters
+            return SignatureAnalyzer._analyze_dataclass(type(instance))
 
         except Exception:
             return {}
