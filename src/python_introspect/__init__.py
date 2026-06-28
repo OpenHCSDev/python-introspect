@@ -38,7 +38,6 @@ from .enableable import (
     Enableable,
     is_enableable,
     mark_enableable,
-    ENABLED_FIELD,
 )
 
 __all__ = [
@@ -68,5 +67,4 @@ __all__ = [
     "Enableable",
     "is_enableable",
     "mark_enableable",
-    "ENABLED_FIELD",
 ]

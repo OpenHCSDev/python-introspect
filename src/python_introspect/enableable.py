@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, ABCMeta
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
 from typing import Any
+from typing import get_type_hints
 from weakref import WeakKeyDictionary
 
-
-ENABLED_FIELD = 'enabled'
 
 _ENABLEABLE_TAG = object()
 _enableable_objects: WeakKeyDictionary[Any, object] = WeakKeyDictionary()
@@ -60,6 +60,58 @@ class Enableable(ABC, metaclass=EnableableMeta):
 
     enabled: bool = True
 
+    @classmethod
+    def callable_field(cls):
+        """Return the dataclass field that defines callable enable semantics."""
+        return fields(Enableable)[0]
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        return cls.callable_field().name
+
+    @classmethod
+    def default_value(cls) -> bool:
+        return cls.callable_field().default
+
+    @classmethod
+    def annotation_type(cls) -> type[bool]:
+        return get_type_hints(Enableable)[cls.require_parameter_name()]
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        return inspect.Parameter(
+            cls.require_parameter_name(),
+            inspect.Parameter.KEYWORD_ONLY,
+            default=cls.default_value(),
+            annotation=cls.annotation_type(),
+        )
+
+    @classmethod
+    def parameter_in(cls, values: Mapping[Any, Any]) -> bool:
+        """Return whether a kwargs-like mapping carries the enable parameter."""
+        return cls.require_parameter_name() in values
+
+    @classmethod
+    def is_parameter_key(cls, key: Any) -> bool:
+        """Return whether key names the enable parameter."""
+        return key == cls.require_parameter_name()
+
+    @classmethod
+    def disabled_in(cls, values: Mapping[Any, Any]) -> bool:
+        """Return whether a kwargs-like mapping explicitly disables execution."""
+        if not cls.parameter_in(values):
+            return False
+        return values[cls.require_parameter_name()] is False
+
+    @classmethod
+    def without_parameter(cls, values: Mapping[Any, Any]) -> dict[Any, Any]:
+        """Return a copy of mapping values without the enable parameter."""
+        return {
+            key: value
+            for key, value in values.items()
+            if not cls.is_parameter_key(key)
+        }
+
 
 def is_enableable(obj: Any) -> bool:
     """Return True iff obj is nominally Enableable.
@@ -93,9 +145,10 @@ def mark_enableable(obj: Any, *, enabled_default: bool = True) -> Any:
     # If we're branding a callable, require the enabled kwarg to exist.
     if callable(obj) and not isinstance(obj, type):
         sig = inspect.signature(obj)
-        if ENABLED_FIELD not in sig.parameters:
+        parameter_name = Enableable.require_parameter_name()
+        if parameter_name not in sig.parameters:
             raise TypeError(
-                f"Enableable callable {obj!r} must have an '{ENABLED_FIELD}' parameter"
+                f"Enableable callable {obj!r} must have an '{parameter_name}' parameter"
             )
 
     _remember_enableable(obj)

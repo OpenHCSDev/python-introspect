@@ -587,16 +587,17 @@ class EnableableParameterOverlay:
     parameters: Dict[str, ParameterInfo]
 
     def parameters_with_owner_fields(self) -> Dict[str, ParameterInfo]:
-        from python_introspect.enableable import ENABLED_FIELD, is_enableable
+        from python_introspect.enableable import Enableable, is_enableable
 
-        if not is_enableable(self.owner) or ENABLED_FIELD in self.parameters:
+        parameter_name = Enableable.require_parameter_name()
+        if not is_enableable(self.owner) or parameter_name in self.parameters:
             return self.parameters
         return {
             **self.parameters,
-            ENABLED_FIELD: ParameterInfo(
-                name=ENABLED_FIELD,
-                param_type=bool,
-                default_value=True,
+            parameter_name: ParameterInfo(
+                name=parameter_name,
+                param_type=Enableable.annotation_type(),
+                default_value=Enableable.default_value(),
                 is_required=False,
                 description=None,
             ),
