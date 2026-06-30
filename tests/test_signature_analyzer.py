@@ -1,17 +1,23 @@
 """Tests for SignatureAnalyzer."""
 
 import inspect
-import pytest
 from dataclasses import dataclass, field
+from enum import Enum
+from functools import wraps
+from typing import get_args
 from typing import Optional, List, Dict, Any
 from python_introspect import (
     SignatureAnalyzer,
     ParameterInfo,
     DocstringExtractor,
-    DocstringInfo,
     mark_enableable,
     set_signature_analysis_target,
 )
+
+
+class WrappedAnnotationMode(Enum):
+    A = "a"
+    B = "b"
 
 
 class TestSignatureAnalyzer:
@@ -67,6 +73,22 @@ class TestSignatureAnalyzer:
 
         assert params["slice_by_slice"].param_type is bool
         assert params["slice_by_slice"].default_value is False
+
+    def test_wrapped_callable_resolves_postponed_annotations_from_original_namespace(self):
+        """Wrapper modules do not own postponed annotations copied from originals."""
+        def original(mode: "WrappedAnnotationMode | str" = WrappedAnnotationMode.A):
+            pass
+
+        @wraps(original)
+        def wrapper(*args, **kwargs):
+            return original(*args, **kwargs)
+
+        wrapper.__module__ = "builtins"
+        wrapper.__signature__ = inspect.signature(original)
+
+        params = SignatureAnalyzer.analyze(wrapper)
+
+        assert get_args(params["mode"].param_type) == (WrappedAnnotationMode, str)
 
     def test_analyze_function_with_docstring(self):
         """Test analyzing function with docstring parameters."""

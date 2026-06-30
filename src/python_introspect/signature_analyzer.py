@@ -656,13 +656,13 @@ class CallableAnalysisContext:
         """Create the public analysis context for a callable."""
         target = signature_analysis_target(callable_obj)
         extended_ns = _get_extended_namespace()
-        module = inspect.getmodule(target)
-        if module is not None:
-            globalns = {**extended_ns, **vars(module)}
-        elif inspect.isfunction(target):
-            globalns = {**extended_ns, **target.__globals__}
-        else:
-            globalns = extended_ns
+        globalns = dict(extended_ns)
+        for namespace_target in cls.annotation_namespace_targets(target):
+            module = inspect.getmodule(namespace_target)
+            if module is not None:
+                globalns.update(vars(module))
+            if inspect.isfunction(namespace_target):
+                globalns.update(namespace_target.__globals__)
 
         return cls(
             target=target,
@@ -680,6 +680,15 @@ class CallableAnalysisContext:
         if inspect.isclass(target):
             return target.__qualname__
         return type(target).__name__
+
+    @staticmethod
+    def annotation_namespace_targets(target: Callable) -> Tuple[Callable, ...]:
+        """Return wrapped-to-public callables whose namespaces can own annotations."""
+
+        unwrapped = inspect.unwrap(target)
+        if unwrapped is target:
+            return (target,)
+        return (unwrapped, target)
 
     def type_hints(self) -> Dict[str, Any]:
         """Resolve type hints using the context-owned namespace."""
