@@ -11,7 +11,7 @@ class TestPackageImports:
         """Test that __version__ is available."""
         assert hasattr(python_introspect, "__version__")
         assert isinstance(python_introspect.__version__, str)
-        assert python_introspect.__version__ == "0.1.4"
+        assert python_introspect.__version__ == "0.1.5"
 
     def test_signature_analyzer_import(self):
         """Test SignatureAnalyzer is importable."""
