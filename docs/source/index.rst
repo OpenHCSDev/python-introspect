@@ -1,55 +1,43 @@
-.. python-introspect documentation master file
+python-introspect
+=================
 
-Welcome to python-introspect's documentation!
-==============================================
+``python-introspect`` analyzes callable signatures, dataclass fields, resolved
+type hints, and docstrings through one extensible API.
 
-**python-introspect** is a pure Python introspection toolkit for function signatures,
-dataclasses, and type hints. It provides powerful utilities for analyzing Python code
-structures at runtime.
+.. toctree::
+   :maxdepth: 2
 
-Features
---------
+   extensions
+   api
+   development
 
-* **Function Signature Analysis**: Deep inspection of function parameters, return types, and annotations
-* **Dataclass Introspection**: Extract and analyze dataclass fields and metadata
-* **Type Hint Processing**: Work with Python's type hints and annotations
-* **Pure Python**: No external dependencies required
-* **Comprehensive**: Handles complex signatures including kwargs, varargs, and nested types
-
-Quick Start
+Quick start
 -----------
-
-Install the package:
-
-.. code-block:: bash
-
-   pip install python-introspect
-
-Basic usage:
 
 .. code-block:: python
 
    from python_introspect import SignatureAnalyzer
 
-   def example_function(a: int, b: str = "default") -> bool:
-       """Example function."""
-       return True
+   def example(a: int, b: str = "default") -> bool:
+       return bool(a and b)
 
-   analyzer = SignatureAnalyzer(example_function)
-   print(analyzer.get_parameter_info())
+   parameters = SignatureAnalyzer().analyze(example)
+   for name, info in parameters.items():
+       print(name, info.param_type, info.default_value, info.is_required)
 
-Contents
---------
+``SignatureAnalyzer.analyze`` accepts functions, methods, classes, dataclass
+types, and instances. Namespace providers and type resolvers let host packages
+extend forward-reference and proxy-type handling without modifying the core.
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+Requirements
+------------
 
-   api/modules
+Python 3.9 or newer and metaclass-registry.
 
-Indices and tables
-==================
+Public surface
+--------------
 
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+The primary public types are ``SignatureAnalyzer``, ``ParameterInfo``,
+``DocstringExtractor``, ``UnifiedParameterAnalyzer``, and ``Enableable``. The
+registration helpers for namespace providers, type resolvers, wrapper targets,
+parameter exclusions, and nominal enablement are also public; see :doc:`api`.

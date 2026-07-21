@@ -5,9 +5,10 @@
 
 import os
 import sys
+from pathlib import Path
 
 # Add the project root to the path so Sphinx can find the package
-sys.path.insert(0, os.path.abspath("../.."))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -15,7 +16,7 @@ sys.path.insert(0, os.path.abspath("../.."))
 project = "python-introspect"
 copyright = "2025, Tristan Simas"
 author = "Tristan Simas"
-release = "0.1.0"
+release = "0.1.4"
 version = "0.1"
 
 # -- General configuration ---------------------------------------------------
@@ -64,14 +65,14 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
 }
 
-templates_path = ["_templates"]
+templates_path = []
 exclude_patterns = []
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "sphinx_rtd_theme"
-html_static_path = ["_static"]
+html_static_path = []
 
 # Theme options
 html_theme_options = {

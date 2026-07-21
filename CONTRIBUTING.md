@@ -22,7 +22,7 @@ Thank you for your interest in contributing to python-introspect! This document 
 
 3. Add the upstream repository:
    ```bash
-   git remote add upstream https://github.com/trissim/python-introspect.git
+   git remote add upstream https://github.com/OpenHCSDev/python-introspect.git
    ```
 
 ## Development Setup
