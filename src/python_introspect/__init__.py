@@ -25,6 +25,7 @@ from .signature_analyzer import (
 from .unified_parameter_analyzer import (
     UnifiedParameterAnalyzer,
     UnifiedParameterInfo,
+    add_parameter_exclusions,
     set_parameter_exclusions,
     parameter_exclusions,
 )
@@ -56,6 +57,7 @@ __all__ = [
     # Unified analysis
     "UnifiedParameterAnalyzer",
     "UnifiedParameterInfo",
+    "add_parameter_exclusions",
     "set_parameter_exclusions",
     "parameter_exclusions",
     # Exceptions

@@ -12,7 +12,7 @@ import inspect
 import dataclasses
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type, List, ClassVar, Tuple, get_args, get_origin
+from typing import Annotated, Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type, List, ClassVar, Tuple, get_args, get_origin
 from weakref import WeakKeyDictionary
 
 from dataclasses import dataclass, field
@@ -77,17 +77,24 @@ def set_signature_analysis_target(wrapper: object, target: Callable) -> None:
 
 def signature_analysis_target(target: Callable) -> Callable:
     """Return the callable that owns user-facing signature metadata."""
-    try:
-        projected = _signature_analysis_targets.get(target)
-    except TypeError:
-        projected = None
-    if projected is not None:
-        return projected
-
-    fallback_record = _signature_analysis_targets_by_id.get(id(target))
-    if fallback_record is not None and fallback_record[0] is target:
-        return fallback_record[1]
-    return target
+    current = target
+    seen: set[int] = set()
+    while True:
+        current_id = id(current)
+        if current_id in seen:
+            raise RuntimeError("signature analysis target declarations contain a cycle.")
+        seen.add(current_id)
+        try:
+            projected = _signature_analysis_targets.get(current)
+        except TypeError:
+            projected = None
+        if projected is None:
+            fallback_record = _signature_analysis_targets_by_id.get(current_id)
+            if fallback_record is not None and fallback_record[0] is current:
+                projected = fallback_record[1]
+        if projected is None:
+            return current
+        current = projected
 
 
 def _get_extended_namespace() -> Dict[str, Any]:
@@ -111,6 +118,18 @@ def _resolve_type(t: type) -> type:
         except Exception:
             pass  # Ignore resolvers that fail
     return t  # No resolver handled it, return as-is
+
+
+def _parameter_annotation_help(annotation: Any) -> tuple[Any, Optional[str]]:
+    """Return the base annotation and optional user help from Annotated metadata."""
+    if get_origin(annotation) is not Annotated:
+        return annotation, None
+    args = get_args(annotation)
+    description = next(
+        (item.strip() for item in args[1:] if isinstance(item, str) and item.strip()),
+        None,
+    )
+    return args[0], description
 
 
 @dataclass(frozen=True)
@@ -261,8 +280,13 @@ class ParametersDocstringSection(DocstringSection):
     """Parameter definition section."""
 
     section_name = "parameters"
-    colon_headers = ("args:", "arguments:", "parameters:")
-    numpy_headers = ("args", "arguments", "parameters")
+    colon_headers = (
+        "args:",
+        "arguments:",
+        "parameters:",
+        "additional parameters:",
+    )
+    numpy_headers = ("args", "arguments", "parameters", "additional parameters")
 
     def consume(
         self,
@@ -313,7 +337,6 @@ class ParametersDocstringSection(DocstringSection):
             state.current_param_lines.append(line)
         else:
             state.parameters.update(DocstringExtractor._parse_inline_parameters(line))
-
 
 class ReturnsDocstringSection(DocstringSection):
     """Return value section."""
@@ -581,7 +604,7 @@ class DeclaredSignatureAnalysisTargetSource(OriginalParameterSource):
 
 @dataclass(frozen=True)
 class EnableableParameterOverlay:
-    """Overlay nominal enableable parameters owned by a wrapper callable."""
+    """Overlay signature metadata owned by a wrapper callable."""
 
     owner: Callable
     parameters: Dict[str, ParameterInfo]
@@ -589,19 +612,63 @@ class EnableableParameterOverlay:
     def parameters_with_owner_fields(self) -> Dict[str, ParameterInfo]:
         from python_introspect.enableable import Enableable, is_enableable
 
+        parameters = self._parameters_with_owner_annotations()
         parameter_name = Enableable.require_parameter_name()
-        if not is_enableable(self.owner) or parameter_name in self.parameters:
-            return self.parameters
+        if not is_enableable(self.owner):
+            return parameters
+        declaration = SignatureAnalyzer.analyze(Enableable)[parameter_name]
+        existing = parameters.get(parameter_name)
+        if existing is not None:
+            if existing.description:
+                return parameters
+            return {
+                **parameters,
+                parameter_name: existing._replace(
+                    description=declaration.description,
+                ),
+            }
         return {
-            **self.parameters,
+            **parameters,
             parameter_name: ParameterInfo(
                 name=parameter_name,
                 param_type=Enableable.annotation_type(),
                 default_value=Enableable.default_value(),
                 is_required=False,
-                description=None,
+                description=declaration.description,
             ),
         }
+
+    def _parameters_with_owner_annotations(self) -> Dict[str, ParameterInfo]:
+        """Retain help metadata on wrapper-only ``Annotated`` parameters."""
+
+        signature = inspect.signature(self.owner)
+        try:
+            annotations = get_type_hints(self.owner, include_extras=True)
+        except Exception:
+            annotations = inspect.get_annotations(self.owner, eval_str=False)
+        parameters = dict(self.parameters)
+        for name, parameter in signature.parameters.items():
+            annotation = annotations.get(name, parameter.annotation)
+            parameter_type, description = _parameter_annotation_help(annotation)
+            if not description:
+                continue
+            existing = parameters.get(name)
+            if existing is not None:
+                if not existing.description:
+                    parameters[name] = existing._replace(description=description)
+                continue
+            parameters[name] = ParameterInfo(
+                name=name,
+                param_type=parameter_type,
+                default_value=(
+                    None
+                    if parameter.default is inspect.Parameter.empty
+                    else parameter.default
+                ),
+                is_required=parameter.default is inspect.Parameter.empty,
+                description=description,
+            )
+        return parameters
 
 
 class WrappedCallableParameterSource(OriginalParameterSource):
@@ -692,7 +759,11 @@ class CallableAnalysisContext:
 
     def type_hints(self) -> Dict[str, Any]:
         """Resolve type hints using the context-owned namespace."""
-        return get_type_hints(self.target, globalns=self.globalns)
+        return get_type_hints(
+            self.target,
+            globalns=self.globalns,
+            include_extras=True,
+        )
 
 
 class SignatureAnalyzer:
@@ -809,6 +880,7 @@ class SignatureAnalyzer:
                     if param.annotation is not inspect.Parameter.empty
                     else Any
                 )
+            param_type, annotation_description = _parameter_annotation_help(param_type)
             default_value = param.default if param.default != inspect.Parameter.empty else None
             is_required = param.default == inspect.Parameter.empty
 
@@ -818,6 +890,8 @@ class SignatureAnalyzer:
                 if docstring_info and docstring_info.parameters
                 else None
             )
+            if param_description is None:
+                param_description = annotation_description
 
             parameters[param_name] = ParameterInfo(
                 name=param_name,

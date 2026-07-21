@@ -4,6 +4,7 @@ import pytest
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from python_introspect import (
+    add_parameter_exclusions,
     UnifiedParameterAnalyzer,
     UnifiedParameterInfo,
     set_parameter_exclusions,
@@ -96,6 +97,17 @@ class TestUnifiedParameterAnalyzer:
         assert "visible" in params
         assert "image" not in params
         assert "runtime_context" not in params
+
+    def test_add_parameter_exclusions_preserves_prior_declarations(self):
+        def func(image, first=None, second=None):
+            pass
+
+        set_parameter_exclusions(func, "first")
+        add_parameter_exclusions(func, "second")
+
+        params = UnifiedParameterAnalyzer.analyze(func, exclude_params=["image"])
+
+        assert params == {}
 
     def test_analyze_class_constructor(self):
         """Test analyzing a class type."""

@@ -59,6 +59,7 @@ class Enableable(ABC, metaclass=EnableableMeta):
     """Mixin indicating an object participates in enabled semantics."""
 
     enabled: bool = True
+    """Run this callable or configuration when enabled; skip it when disabled."""
 
     @classmethod
     def callable_field(cls):

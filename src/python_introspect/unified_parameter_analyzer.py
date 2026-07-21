@@ -49,6 +49,16 @@ def parameter_exclusions(target: object) -> frozenset[str]:
     return frozenset()
 
 
+def add_parameter_exclusions(
+    target: object,
+    names: Union[str, list[str], tuple[str, ...], frozenset[str]],
+) -> None:
+    """Add hidden parameter names without discarding prior declarations."""
+
+    normalized = (names,) if isinstance(names, str) else tuple(names)
+    set_parameter_exclusions(target, (*parameter_exclusions(target), *normalized))
+
+
 @dataclass
 class UnifiedParameterInfo:
     """Unified parameter information that works for all parameter sources."""
