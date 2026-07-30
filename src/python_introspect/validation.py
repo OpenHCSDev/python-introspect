@@ -27,6 +27,19 @@ class AnnotationValidationError(ValueError):
 DataclassT = TypeVar("DataclassT")
 
 
+class AnnotatedDataclassValidationMixin:
+    """Validate a dataclass instance from its resolved annotations after construction.
+
+    Dataclass declarations inherit this mixin when their annotations are the
+    authoritative runtime schema. Keeping the lifecycle hook on a nominal base
+    also preserves validation when another package recreates the dataclass with
+    the same bases.
+    """
+
+    def __post_init__(self) -> None:
+        validate_annotated_dataclass(self)
+
+
 def overlay_non_none_dataclass(
     base: DataclassT,
     overlay: object,
