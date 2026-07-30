@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, make_dataclass
 from enum import Enum
 from typing import Annotated, Literal
 
@@ -6,6 +6,7 @@ import pytest
 from annotated_types import Ge, Gt, Le, MinLen, Predicate
 
 from python_introspect import (
+    AnnotatedDataclassValidationMixin,
     overlay_non_none_dataclass,
     validate_annotated_dataclass,
 )
@@ -21,12 +22,9 @@ NonBlankText = Annotated[str, MinLen(1), Predicate(str.strip)]
 
 
 @dataclass(frozen=True)
-class BaseConfig:
+class BaseConfig(AnnotatedDataclassValidationMixin):
     port: Port = 7000
     mode: Mode = Mode.FIRST
-
-    def __post_init__(self) -> None:
-        validate_annotated_dataclass(self)
 
 
 @dataclass(frozen=True)
@@ -51,6 +49,19 @@ def test_validation_rejects_wrong_nominal_types_without_coercion() -> None:
 
     with pytest.raises(TypeError, match="mode must be Mode"):
         ChildConfig(mode="first")
+
+
+def test_inherited_validation_survives_dataclass_recreation() -> None:
+    RecreatedConfig = make_dataclass(
+        "RecreatedConfig",
+        (("port", Port, 7000),),
+        bases=(AnnotatedDataclassValidationMixin,),
+        frozen=True,
+    )
+
+    assert RecreatedConfig(port=8000).port == 8000
+    with pytest.raises(ValueError, match="port must be at least"):
+        RecreatedConfig(port=0)
 
 
 @dataclass(frozen=True)

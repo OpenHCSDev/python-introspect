@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 project = "python-introspect"
 copyright = "2025, Tristan Simas"
 author = "Tristan Simas"
-release = "0.1.6"
+release = "0.1.7"
 version = "0.1"
 
 # -- General configuration ---------------------------------------------------

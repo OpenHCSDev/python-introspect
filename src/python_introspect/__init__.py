@@ -9,7 +9,7 @@ Extensibility:
     type resolution for framework-specific types (lazy configs, proxies, etc.)
 """
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
@@ -41,6 +41,7 @@ from .enableable import (
     mark_enableable,
 )
 from .validation import (
+    AnnotatedDataclassValidationMixin,
     AnnotationValidationError,
     overlay_non_none_dataclass,
     validate_annotated_dataclass,
@@ -95,6 +96,7 @@ __all__ = [
     "is_enableable",
     "mark_enableable",
     # Runtime annotation validation
+    "AnnotatedDataclassValidationMixin",
     "AnnotationValidationError",
     "overlay_non_none_dataclass",
     "validate_annotated_dataclass",
