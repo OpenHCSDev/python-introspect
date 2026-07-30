@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
 from typing import get_args
-from typing import Optional, List, Dict, Any
+from typing import Annotated, Optional, List, Dict, Any
 from python_introspect import (
     SignatureAnalyzer,
     ParameterInfo,
@@ -162,6 +162,18 @@ class TestSignatureAnalyzer:
         assert params["items"].default_value == []
         assert params["settings"].default_value == {}
         assert params["items"].is_required is False
+
+    def test_analyze_dataclass_preserves_annotated_metadata(self):
+        """Dataclass analysis retains metadata used by downstream projections."""
+        marker = object()
+
+        @dataclass
+        class Config:
+            shortcut: Annotated[str, marker] = "Ctrl+P"
+
+        params = SignatureAnalyzer.analyze(Config)
+
+        assert params["shortcut"].param_type == Annotated[str, marker]
 
     def test_field_type_docs_use_resolved_forward_annotations(self):
         docs = SignatureAnalyzer._extract_field_type_docs(
