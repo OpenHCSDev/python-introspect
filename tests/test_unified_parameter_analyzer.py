@@ -295,26 +295,6 @@ class TestUnifiedParameterInfo:
         assert unified.source_type == "test"
 
 
-class TestBackwardCompatibility:
-    """Test backward compatibility aliases."""
-
-    def test_parameter_analyzer_alias(self):
-        """Test ParameterAnalyzer alias."""
-        from python_introspect.unified_parameter_analyzer import ParameterAnalyzer
-
-        assert ParameterAnalyzer == UnifiedParameterAnalyzer
-
-    def test_analyze_parameters_alias(self):
-        """Test analyze_parameters function alias."""
-        from python_introspect.unified_parameter_analyzer import analyze_parameters
-
-        def func(x: int):
-            pass
-
-        params = analyze_parameters(func)
-        assert "x" in params
-
-
 class TestObjectInstanceAnalysis:
     """Test analysis of regular object instances."""
 

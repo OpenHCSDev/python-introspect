@@ -9,7 +9,7 @@ Extensibility:
     type resolution for framework-specific types (lazy configs, proxies, etc.)
 """
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
@@ -40,6 +40,31 @@ from .enableable import (
     is_enableable,
     mark_enableable,
 )
+from .validation import (
+    AnnotationValidationError,
+    overlay_non_none_dataclass,
+    validate_annotated_dataclass,
+    validate_annotation_value,
+)
+from .dataclass_projection import (
+    dataclass_from_mapping,
+    project_dataclass,
+)
+from .environment_projection import (
+    EnvironmentVariable,
+    overlay_dataclass_from_environment,
+)
+from .annotation_types import (
+    enum_member_type,
+    get_enum_from_list,
+    is_enum_type,
+    is_list_of_enums,
+    is_union_type,
+    make_optional,
+    optional_member_type,
+    resolve_annotated,
+    resolve_optional,
+)
 
 __all__ = [
     # Version
@@ -69,4 +94,25 @@ __all__ = [
     "Enableable",
     "is_enableable",
     "mark_enableable",
+    # Runtime annotation validation
+    "AnnotationValidationError",
+    "overlay_non_none_dataclass",
+    "validate_annotated_dataclass",
+    "validate_annotation_value",
+    # Dataclass projection
+    "dataclass_from_mapping",
+    "project_dataclass",
+    # Environment projection
+    "EnvironmentVariable",
+    "overlay_dataclass_from_environment",
+    # Annotation type operations
+    "enum_member_type",
+    "get_enum_from_list",
+    "is_enum_type",
+    "is_list_of_enums",
+    "is_union_type",
+    "make_optional",
+    "optional_member_type",
+    "resolve_annotated",
+    "resolve_optional",
 ]

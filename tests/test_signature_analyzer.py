@@ -20,6 +20,22 @@ class WrappedAnnotationMode(Enum):
     B = "b"
 
 
+@dataclass
+class FieldDocumentationConfig:
+    """Documentation from the declared nested type."""
+
+    value: int = 1
+
+
+@dataclass
+class ForwardFieldDocumentationOwner:
+    nested: "FieldDocumentationConfig | None" = None
+
+
+class LazyNamedConcrete:
+    """Documentation owned by a real class whose name happens to start with Lazy."""
+
+
 class TestSignatureAnalyzer:
     """Test SignatureAnalyzer functionality."""
 
@@ -146,6 +162,21 @@ class TestSignatureAnalyzer:
         assert params["items"].default_value == []
         assert params["settings"].default_value == {}
         assert params["items"].is_required is False
+
+    def test_field_type_docs_use_resolved_forward_annotations(self):
+        docs = SignatureAnalyzer._extract_field_type_docs(
+            ForwardFieldDocumentationOwner
+        )
+
+        assert docs["nested"] == "Documentation from the declared nested type."
+
+    def test_lazy_prefix_does_not_act_as_a_type_resolver(self):
+        info = DocstringExtractor.extract(LazyNamedConcrete)
+
+        assert info.summary == (
+            "Documentation owned by a real class whose name happens to start "
+            "with Lazy."
+        )
 
     def test_analyze_dataclass_instance(self):
         """Test analyzing a dataclass instance."""

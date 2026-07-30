@@ -18,6 +18,7 @@ from weakref import WeakKeyDictionary
 from dataclasses import dataclass, field
 
 from metaclass_registry import AutoRegisterMeta
+from .annotation_types import optional_member_type
 
 # =============================================================================
 # PLUGIN REGISTRY - Allows frameworks to extend type resolution
@@ -54,9 +55,7 @@ def register_type_resolver(resolver: Callable[[type], Optional[type]]) -> None:
 
     Example:
         def resolve_lazy(t):
-            if t.__name__.startswith('Lazy'):
-                return get_base_type(t)
-            return None
+            return lazy_to_base.get(t)
         register_type_resolver(resolve_lazy)
     """
     _type_resolvers.append(resolver)
@@ -111,12 +110,9 @@ def _get_extended_namespace() -> Dict[str, Any]:
 def _resolve_type(t: type) -> type:
     """Resolve a type through registered resolvers, returning the unwrapped type."""
     for resolver in _type_resolvers:
-        try:
-            resolved = resolver(t)
-            if resolved is not None:
-                return resolved
-        except Exception:
-            pass  # Ignore resolvers that fail
+        resolved = resolver(t)
+        if resolved is not None:
+            return resolved
     return t  # No resolver handled it, return as-is
 
 
@@ -451,25 +447,10 @@ class DocstringExtractor:
 
     @staticmethod
     def _resolve_lazy_target(target: Union[Callable, type]) -> Union[Callable, type]:
-        """Resolve lazy dataclass to its base class for docstring extraction.
-
-        Lazy dataclasses are dynamically created and may not have proper docstrings.
-        This method attempts to find the original base class that the lazy class
-        was created from.
-        """
+        """Resolve a proxy type through the registered type authority."""
         if not inspect.isclass(target):
             return target
-
-        # Check if this looks like a lazy dataclass (starts with "Lazy")
-        if target.__name__.startswith('Lazy'):
-            # Try to find the base class in the MRO
-            for base in inspect.getmro(target):
-                if base != target and base.__name__ != 'object':
-                    # Found a base class that's not the lazy class itself
-                    if not base.__name__.startswith('Lazy'):
-                        return base
-
-        return target
+        return _resolve_type(target)
 
     @staticmethod
     def _parse_docstring_ast(target: Union[Callable, type], docstring: str) -> DocstringInfo:
@@ -1126,7 +1107,7 @@ class SignatureAnalyzer:
 
             return field_docs
 
-        except Exception as e:
+        except Exception:
             # Return empty dict if AST parsing fails
             # Could add logging here for debugging: logger.debug(f"AST parsing failed: {e}")
             return {}
@@ -1153,23 +1134,20 @@ class SignatureAnalyzer:
                 return {}
 
             fields = dataclasses.fields(dataclass_type)
+            type_hints = get_type_hints(dataclass_type, include_extras=True)
 
             for field in fields:
                 # Check if this field's type is a dataclass
-                field_type = field.type
+                field_type = type_hints.get(field.name, field.type)
 
-                # Handle Optional types
-                if get_origin(field_type) is Union:
-                    # Extract the non-None type from Optional[T]
-                    args = get_args(field_type)
-                    non_none_types = [arg for arg in args if arg is not type(None)]
-                    if len(non_none_types) == 1:
-                        field_type = non_none_types[0]
+                optional_type = optional_member_type(field_type)
+                if optional_type is not None:
+                    field_type = optional_type
 
                 # If the field type is a dataclass, extract its docstring as field documentation
                 if dataclasses.is_dataclass(field_type):
                     # ENHANCEMENT: Resolve lazy dataclasses to their base classes for documentation
-                    resolved_field_type = SignatureAnalyzer._resolve_lazy_dataclass_for_docs(field_type)
+                    resolved_field_type = _resolve_type(field_type)
 
                     docstring_info = DocstringExtractor.extract(resolved_field_type)
                     if docstring_info.summary:
@@ -1182,7 +1160,7 @@ class SignatureAnalyzer:
 
             return field_type_docs
 
-        except Exception as e:
+        except Exception:
             # Return empty dict if extraction fails
             return {}
 
@@ -1256,7 +1234,7 @@ class SignatureAnalyzer:
 
             # ENHANCEMENT: Resolve lazy dataclasses to their base classes
             # Frameworks can register explicit proxy-to-public type resolvers.
-            resolved_type = SignatureAnalyzer._resolve_lazy_dataclass_for_docs(dataclass_type)
+            resolved_type = _resolve_type(dataclass_type)
 
             # Check cache first for performance
             cache_key = (resolved_type.__name__, resolved_type.__module__)
@@ -1273,30 +1251,6 @@ class SignatureAnalyzer:
         except Exception:
             return None
 
-    @staticmethod
-    def _resolve_lazy_dataclass_for_docs(dataclass_type: type) -> type:
-        """Resolve lazy dataclasses to their base classes for documentation extraction.
-
-        Uses registered type resolvers to unwrap lazy/proxy types.
-        Falls back to heuristics if no resolver handles the type.
-
-        Args:
-            dataclass_type: The dataclass type (potentially lazy)
-
-        Returns:
-            The resolved dataclass type for documentation extraction
-        """
-        try:
-            # First, try registered type resolvers (framework-specific)
-            resolved = _resolve_type(dataclass_type)
-            if resolved is not dataclass_type:
-                return resolved
-            return dataclass_type
-
-        except Exception:
-            return dataclass_type
-
-    @staticmethod
     def _extract_all_field_docs(dataclass_type: type) -> Dict[str, str]:
         """Extract all field documentation for a dataclass and return as a dictionary.
 

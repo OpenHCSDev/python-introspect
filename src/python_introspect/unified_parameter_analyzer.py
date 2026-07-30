@@ -401,9 +401,3 @@ class UnifiedParameterAnalyzer:
                 )
         
         return enhanced_params
-
-
-# Backward compatibility aliases
-# These allow existing code to continue working while migration happens
-ParameterAnalyzer = UnifiedParameterAnalyzer
-analyze_parameters = UnifiedParameterAnalyzer.analyze

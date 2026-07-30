@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "python-introspect"
-version = "0.1.5"
+version = "0.1.6"
 description = "Pure Python introspection toolkit for function signatures, dataclasses, and type hints"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "annotated-types>=0.7.0",
     "metaclass-registry>=0.1.0",
 ]
 
