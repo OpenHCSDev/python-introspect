@@ -936,7 +936,7 @@ class SignatureAnalyzer:
         try:
             # Try to get type hints, fall back to __annotations__ if resolution fails
             try:
-                type_hints = get_type_hints(dataclass_type)
+                type_hints = get_type_hints(dataclass_type, include_extras=True)
             except Exception:
                 type_hints = inspect.get_annotations(dataclass_type, eval_str=False)
 
