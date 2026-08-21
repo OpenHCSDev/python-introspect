@@ -56,6 +56,11 @@ from .environment_projection import (
     overlay_dataclass_from_environment,
 )
 from .annotation_types import (
+    coerce_enum_member,
+    declared_enum_type,
+    enum_import_path,
+    enum_input_values,
+    enum_member_names,
     enum_member_type,
     get_enum_from_list,
     is_enum_type,
@@ -108,6 +113,11 @@ __all__ = [
     "EnvironmentVariable",
     "overlay_dataclass_from_environment",
     # Annotation type operations
+    "coerce_enum_member",
+    "declared_enum_type",
+    "enum_import_path",
+    "enum_input_values",
+    "enum_member_names",
     "enum_member_type",
     "get_enum_from_list",
     "is_enum_type",
