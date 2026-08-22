@@ -71,6 +71,7 @@ from .annotation_types import (
     resolve_annotated,
     resolve_optional,
 )
+from .callable_declaration import callable_declaration_kwargs
 
 __all__ = [
     # Version
@@ -127,4 +128,6 @@ __all__ = [
     "optional_member_type",
     "resolve_annotated",
     "resolve_optional",
+    # Callable declarations
+    "callable_declaration_kwargs",
 ]
