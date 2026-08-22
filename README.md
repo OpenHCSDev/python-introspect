@@ -1,7 +1,7 @@
 # python-introspect
 
 Extensible analysis of callable signatures, dataclass fields, type hints, and
-docstrings.
+docstrings, plus signature-derived callable declaration projection.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI version](https://badge.fury.io/py/python-introspect.svg)](https://badge.fury.io/py/python-introspect)
@@ -29,6 +29,11 @@ for name, info in parameters.items():
 ``analyze`` is the unified entry point for functions, methods, classes,
 dataclass types, and instances. It returns a mapping of names to
 ``ParameterInfo`` records.
+
+Use ``callable_declaration_kwargs`` when declaration identity should omit
+keyword arguments equal to their signature defaults. The caller supplies value
+equality so array, lazy, or other framework-specific values keep their owning
+semantics.
 
 ## Extension points
 

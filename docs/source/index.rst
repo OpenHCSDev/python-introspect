@@ -2,7 +2,8 @@ python-introspect
 =================
 
 ``python-introspect`` analyzes callable signatures, dataclass fields, resolved
-type hints, and docstrings through one extensible API.
+type hints, and docstrings, and projects canonical callable declarations from
+signature defaults through one extensible API.
 
 .. toctree::
    :maxdepth: 2
@@ -40,4 +41,6 @@ Public surface
 The primary public types are ``SignatureAnalyzer``, ``ParameterInfo``,
 ``DocstringExtractor``, ``UnifiedParameterAnalyzer``, and ``Enableable``. The
 registration helpers for namespace providers, type resolvers, wrapper targets,
-parameter exclusions, and nominal enablement are also public; see :doc:`api`.
+parameter exclusions, and nominal enablement are also public.
+``callable_declaration_kwargs`` removes keyword arguments equal to their
+signature defaults using caller-provided equality semantics; see :doc:`api`.
