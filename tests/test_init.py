@@ -11,42 +11,48 @@ class TestPackageImports:
         """Test that __version__ is available."""
         assert hasattr(python_introspect, "__version__")
         assert isinstance(python_introspect.__version__, str)
-        assert python_introspect.__version__ == "0.1.10"
+        assert python_introspect.__version__ == "0.1.11"
 
     def test_signature_analyzer_import(self):
         """Test SignatureAnalyzer is importable."""
         assert hasattr(python_introspect, "SignatureAnalyzer")
         from python_introspect import SignatureAnalyzer
+
         assert SignatureAnalyzer is not None
 
     def test_parameter_info_import(self):
         """Test ParameterInfo is importable."""
         assert hasattr(python_introspect, "ParameterInfo")
         from python_introspect import ParameterInfo
+
         assert ParameterInfo is not None
 
     def test_docstring_info_import(self):
         """Test DocstringInfo is importable."""
         assert hasattr(python_introspect, "DocstringInfo")
         from python_introspect import DocstringInfo
+
         assert DocstringInfo is not None
 
     def test_docstring_extractor_import(self):
         """Test DocstringExtractor is importable."""
         assert hasattr(python_introspect, "DocstringExtractor")
         from python_introspect import DocstringExtractor
+
         assert DocstringExtractor is not None
 
     def test_unified_parameter_analyzer_import(self):
         """Test UnifiedParameterAnalyzer is importable."""
         assert hasattr(python_introspect, "UnifiedParameterAnalyzer")
         from python_introspect import UnifiedParameterAnalyzer
+
         assert UnifiedParameterAnalyzer is not None
 
     def test_unified_parameter_info_import(self):
         """Test UnifiedParameterInfo is importable."""
         assert hasattr(python_introspect, "UnifiedParameterInfo")
         from python_introspect import UnifiedParameterInfo
+
         assert UnifiedParameterInfo is not None
 
     def test_exceptions_import(self):
@@ -57,6 +63,7 @@ class TestPackageImports:
             DocstringParsingError,
             TypeResolutionError,
         )
+
         assert IntrospectionError is not None
         assert SignatureAnalysisError is not None
         assert DocstringParsingError is not None
@@ -98,6 +105,7 @@ class TestPublicAPI:
         """Test that 'from python_introspect import *' works."""
         # This is a sanity check that __all__ is properly defined
         import python_introspect
+
         all_names = python_introspect.__all__
 
         for name in all_names:

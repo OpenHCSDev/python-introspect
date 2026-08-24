@@ -9,7 +9,7 @@ Extensibility:
     type resolution for framework-specific types (lazy configs, proxies, etc.)
 """
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
@@ -72,6 +72,7 @@ from .annotation_types import (
     resolve_optional,
 )
 from .callable_declaration import callable_declaration_kwargs
+from .runtime_parameter import RuntimeParameterDeclarationABC
 
 __all__ = [
     # Version
@@ -130,4 +131,6 @@ __all__ = [
     "resolve_optional",
     # Callable declarations
     "callable_declaration_kwargs",
+    # Runtime-supplied callable parameters
+    "RuntimeParameterDeclarationABC",
 ]
