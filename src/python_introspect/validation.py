@@ -148,7 +148,8 @@ def validate_annotation_value(
         _validate_mapping(annotation, value, path)
         return
     if origin is Callable:
-        _validate_callable(value, path)
+        if not callable(value):
+            raise TypeError(f"{path} must be callable; got {type(value).__name__}.")
         return
     if origin is ClassVar:
         return
@@ -215,11 +216,6 @@ def _validate_mapping(annotation: object, value: object, path: str) -> None:
     for key, item in value.items():
         validate_annotation_value(key_type, key, path=f"{path}.key")
         validate_annotation_value(item_type, item, path=f"{path}[{key!r}]")
-
-
-def _validate_callable(value: object, path: str) -> None:
-    if not callable(value):
-        raise TypeError(f"{path} must be callable; got {type(value).__name__}.")
 
 
 def _annotation_label(annotation: object) -> str:
