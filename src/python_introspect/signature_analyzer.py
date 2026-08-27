@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from metaclass_registry import AutoRegisterMeta
 from .annotation_types import optional_member_type
+from .docstring_annotations import infer_parameter_annotation
 
 # =============================================================================
 # PLUGIN REGISTRY - Allows frameworks to extend type resolution
@@ -173,19 +174,21 @@ class DocstringParseState:
     parameters: Dict[str, str] = field(default_factory=dict)
     returns: Optional[str] = None
     examples: Optional[str] = None
-    current_param: Optional[str] = None
+    current_params: Tuple[str, ...] = ()
     current_param_lines: List[str] = field(default_factory=list)
 
     def finalize_current_param(self) -> None:
         """Commit the active parameter description, if one is being parsed."""
-        if self.current_param and self.current_param_lines:
-            self.parameters[self.current_param] = (
-                "\n".join(self.current_param_lines).strip()
+        if self.current_params and self.current_param_lines:
+            description = "\n".join(self.current_param_lines).strip()
+            self.parameters.update(
+                (parameter_name, description)
+                for parameter_name in self.current_params
             )
 
     def reset_current_param(self) -> None:
         """Clear parameter continuation state after a section transition."""
-        self.current_param = None
+        self.current_params = ()
         self.current_param_lines = []
 
     def transition_to(self, section: "DocstringSection") -> "DocstringSection":
@@ -283,6 +286,13 @@ class ParametersDocstringSection(DocstringSection):
         "additional parameters:",
     )
     numpy_headers = ("args", "arguments", "parameters", "additional parameters")
+    parameter_declaration_pattern = re.compile(
+        r"^(?:"
+        r":param\s+(?P<sphinx_name>\w+)"
+        r"|[-•*]\s*(?P<bullet_names>\w+(?:\s*,\s*\w+)*)"
+        r"|(?P<plain_names>\w+(?:\s*,\s*\w+)*)"
+        r")\s*:\s*(?P<description>.+)$"
+    )
 
     def consume(
         self,
@@ -290,46 +300,32 @@ class ParametersDocstringSection(DocstringSection):
         original_line: str,
         line: str,
     ) -> None:
-        param_match_google = re.match(r"^(\w+):\s*(.+)", line)
-        param_match_sphinx = re.match(r"^:param\s+(\w+):\s*(.+)", line)
-        param_match_numpy = re.match(r"^(\w+)\s*:\s*(.+)", line)
-        param_match_inline = re.match(
-            r"^(\w+):\s*(\w+(?:\[.*?\])?|\w+(?:\s*\|\s*\w+)*)\s+(.+)",
-            line,
-        )
-        param_match_bullet = re.match(r"^[-•*]\s*(\w+):\s*(.+)", line)
-
-        if (
-            param_match_google
-            or param_match_sphinx
-            or param_match_numpy
-            or param_match_inline
-            or param_match_bullet
-        ):
+        declaration = self.parameter_declaration_pattern.fullmatch(line)
+        if declaration is not None:
             state.finalize_current_param()
-
-            if param_match_google:
-                param_name, param_desc = param_match_google.groups()
-            elif param_match_sphinx:
-                param_name, param_desc = param_match_sphinx.groups()
-            elif param_match_numpy:
-                param_name, param_desc = param_match_numpy.groups()
-            elif param_match_inline:
-                param_name, param_type, param_desc = param_match_inline.groups()
-                param_desc = f"{param_type} - {param_desc}"
-            else:
-                param_name, param_desc = param_match_bullet.groups()
-
-            state.current_param = param_name
-            state.current_param_lines = [param_desc.strip()]
-        elif state.current_param and (
+            declared_names = next(
+                value
+                for value in (
+                    declaration.group("sphinx_name"),
+                    declaration.group("bullet_names"),
+                    declaration.group("plain_names"),
+                )
+                if value is not None
+            )
+            state.current_params = tuple(
+                name.strip() for name in declared_names.split(",")
+            )
+            state.current_param_lines = [
+                declaration.group("description").strip()
+            ]
+        elif state.current_params and (
             original_line.startswith("    ") or original_line.startswith("\t")
         ):
             state.current_param_lines.append(line)
         elif not line:
             state.finalize_current_param()
             state.reset_current_param()
-        elif state.current_param:
+        elif state.current_params:
             state.current_param_lines.append(line)
         else:
             state.parameters.update(DocstringExtractor._parse_inline_parameters(line))
@@ -731,12 +727,16 @@ class CallableAnalysisContext:
 
     @staticmethod
     def annotation_namespace_targets(target: Callable) -> Tuple[Callable, ...]:
-        """Return wrapped-to-public callables whose namespaces can own annotations."""
+        """Return runtime-to-declaration callables whose namespaces own annotations."""
 
         unwrapped = inspect.unwrap(target)
         if unwrapped is target:
             return (target,)
-        return (unwrapped, target)
+        # ``functools.wraps`` copies the declaration's annotation strings onto a
+        # wrapper whose runtime globals belong to the decorator module.  Merge
+        # outward so the unwrapped declaration, which authored those strings,
+        # has final authority over colliding names.
+        return (target, unwrapped)
 
     def type_hints(self) -> Dict[str, Any]:
         """Resolve type hints using the context-owned namespace."""
@@ -854,14 +854,6 @@ class SignatureAnalyzer:
                 continue 
 
             from typing import Any
-            param_type = type_hints.get(param_name)
-            if param_type is None:
-                param_type = (
-                    param.annotation
-                    if param.annotation is not inspect.Parameter.empty
-                    else Any
-                )
-            param_type, annotation_description = _parameter_annotation_help(param_type)
             default_value = param.default if param.default != inspect.Parameter.empty else None
             is_required = param.default == inspect.Parameter.empty
 
@@ -872,7 +864,16 @@ class SignatureAnalyzer:
                 else None
             )
             if param_description is None:
+                annotation = type_hints.get(param_name, param.annotation)
+                _base_annotation, annotation_description = _parameter_annotation_help(
+                    annotation
+                )
                 param_description = annotation_description
+
+            annotation = type_hints.get(param_name, param.annotation)
+            if annotation is inspect.Parameter.empty:
+                annotation = infer_parameter_annotation(param, param_description)
+            param_type, _annotation_description = _parameter_annotation_help(annotation)
 
             parameters[param_name] = ParameterInfo(
                 name=param_name,

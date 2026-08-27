@@ -1,10 +1,11 @@
 """Tests for SignatureAnalyzer."""
 
 import inspect
+from collections.abc import Callable as CallableABC, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
-from typing import get_args
+from typing import get_args, get_origin
 from typing import Annotated, Optional, List, Dict, Any
 from python_introspect import (
     SignatureAnalyzer,
@@ -90,6 +91,49 @@ class TestSignatureAnalyzer:
         assert params["slice_by_slice"].param_type is bool
         assert params["slice_by_slice"].default_value is False
 
+    def test_unannotated_callable_parameters_derive_types_from_declarations(self):
+        """Defaults and NumPy-style type lines form a typed authoring signature."""
+
+        def external(
+            image,
+            values=None,
+            exclude_border=False,
+            block_size=2,
+            reducer=max,
+        ):
+            """External array operation.
+
+            Parameters
+            ----------
+            image : ndarray
+                Input image.
+            values : ndarray, optional
+                Optional values.
+            exclude_border : tuple of ints, int, or False, optional
+                Border exclusion.
+            block_size : array_like or int
+                Block dimensions.
+            reducer : callable
+                Reduction function.
+            """
+
+        params = SignatureAnalyzer.analyze(external)
+
+        assert set(get_args(params["values"].param_type)) == {
+            Sequence[Any],
+            type(None),
+        }
+        assert set(get_args(params["exclude_border"].param_type)) == {
+            bool,
+            int,
+            tuple[Any, ...],
+        }
+        assert set(get_args(params["block_size"].param_type)) == {
+            int,
+            Sequence[Any],
+        }
+        assert get_origin(params["reducer"].param_type) is CallableABC
+
     def test_wrapped_callable_resolves_postponed_annotations_from_original_namespace(self):
         """Wrapper modules do not own postponed annotations copied from originals."""
         def original(mode: "WrappedAnnotationMode | str" = WrappedAnnotationMode.A):
@@ -105,6 +149,27 @@ class TestSignatureAnalyzer:
         params = SignatureAnalyzer.analyze(wrapper)
 
         assert get_args(params["mode"].param_type) == (WrappedAnnotationMode, str)
+
+    def test_wrapped_declaration_namespace_overrides_decorator_name_collision(self):
+        """Copied annotation strings resolve against their declaration owner."""
+
+        def original(mode: "WrappedAnnotationMode" = WrappedAnnotationMode.A):
+            pass
+
+        wrapper_namespace = {"wraps": wraps, "original": original}
+        exec(
+            "@wraps(original)\n"
+            "def wrapper(*args, **kwargs):\n"
+            "    return original(*args, **kwargs)\n",
+            wrapper_namespace,
+        )
+        wrapper = wrapper_namespace["wrapper"]
+        wrapper.__globals__["WrappedAnnotationMode"] = lambda: None
+        wrapper.__signature__ = inspect.signature(original)
+
+        params = SignatureAnalyzer.analyze(wrapper)
+
+        assert params["mode"].param_type is WrappedAnnotationMode
 
     def test_analyze_function_with_docstring(self):
         """Test analyzing function with docstring parameters."""
@@ -418,6 +483,23 @@ class TestDocstringExtractor:
         info = DocstringExtractor.extract(func)
         # NumPy style parsing support
         assert "x" in info.parameters or info.parameters == {}
+
+    def test_extract_numpy_style_multi_name_declaration(self):
+        """One NumPy declaration can author the same description for many names."""
+
+        def func(in_range="image", out_range="dtype"):
+            """Rescale values.
+
+            Parameters
+            ----------
+            in_range, out_range : str or 2-tuple, optional
+                Accepted intensity bounds.
+            """
+
+        info = DocstringExtractor.extract(func)
+
+        assert info.parameters["in_range"].startswith("str or 2-tuple")
+        assert info.parameters["out_range"] == info.parameters["in_range"]
 
     def test_extract_multiline_parameter_description(self):
         """Test extracting multiline parameter descriptions."""
