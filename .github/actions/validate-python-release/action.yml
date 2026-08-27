@@ -1,0 +1,24 @@
+name: Validate Python release tag
+description: Prove that a built wheel, annotated Git tag, and checked-out commit agree.
+
+inputs:
+  distribution-glob:
+    description: Wheel glob relative to the repository root.
+    required: false
+    default: dist/*.whl
+
+runs:
+  using: composite
+  steps:
+    - name: Validate immutable release declaration
+      shell: bash
+      env:
+        PYTHON_RELEASE_COMMIT: ${{ github.sha }}
+        PYTHON_RELEASE_DISTRIBUTION_GLOB: ${{ inputs.distribution-glob }}
+        PYTHON_RELEASE_TAG: ${{ github.ref_name }}
+      run: |
+        python "$GITHUB_ACTION_PATH/validate_python_release.py" \
+          --repository-root "$GITHUB_WORKSPACE" \
+          --distribution-glob "$PYTHON_RELEASE_DISTRIBUTION_GLOB" \
+          --tag "$PYTHON_RELEASE_TAG" \
+          --commit "$PYTHON_RELEASE_COMMIT"
