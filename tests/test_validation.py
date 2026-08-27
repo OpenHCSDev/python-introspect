@@ -1,6 +1,7 @@
+from collections.abc import Callable
 from dataclasses import dataclass, make_dataclass
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import pytest
 from annotated_types import Ge, Gt, Le, MinLen, Predicate
@@ -9,6 +10,7 @@ from python_introspect import (
     AnnotatedDataclassValidationMixin,
     overlay_non_none_dataclass,
     validate_annotated_dataclass,
+    validate_annotation_value,
 )
 
 
@@ -91,6 +93,19 @@ def test_literal_validation_preserves_nominal_identity() -> None:
     assert LiteralConfig(value=1).value == 1
     with pytest.raises(ValueError, match="must be one of"):
         LiteralConfig(value=True)
+
+
+def test_callable_validation_uses_the_declared_runtime_contract() -> None:
+    class CallableInstance:
+        def __call__(self) -> None:
+            pass
+
+    annotation = Callable[..., Any]
+    validate_annotation_value(annotation, max, path="reducer")
+    validate_annotation_value(annotation, CallableInstance(), path="reducer")
+
+    with pytest.raises(TypeError, match="reducer must be callable"):
+        validate_annotation_value(annotation, 7, path="reducer")
 
 
 @dataclass(frozen=True)

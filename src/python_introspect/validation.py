@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import fields, is_dataclass, replace
 from functools import singledispatch
 from typing import (
@@ -10,13 +11,14 @@ from typing import (
     Any,
     ClassVar,
     Literal,
+    TypeVar,
     get_args,
     get_origin,
     get_type_hints,
-    TypeVar,
 )
 
 from annotated_types import Ge, Gt, Interval, Le, Len, Lt, MaxLen, MinLen, Predicate
+
 from .annotation_types import is_union_type
 
 
@@ -133,20 +135,20 @@ def validate_annotation_value(
         )
     if origin is Literal:
         choices = get_args(annotation)
-        if not any(
-            type(value) is type(choice) and value == choice
-            for choice in choices
-        ):
+        if not any(type(value) is type(choice) and value == choice for choice in choices):
             raise AnnotationValidationError(f"{path} must be one of {choices!r}.")
         return
     if origin is tuple:
         _validate_tuple(annotation, value, path)
         return
-    if origin in {list, set, frozenset, Sequence, Set}:
+    if origin in {list, set, frozenset, Sequence, AbstractSet}:
         _validate_sequence(annotation, value, path)
         return
     if origin in {dict, Mapping}:
         _validate_mapping(annotation, value, path)
+        return
+    if origin is Callable:
+        _validate_callable(value, path)
         return
     if origin is ClassVar:
         return
@@ -213,6 +215,11 @@ def _validate_mapping(annotation: object, value: object, path: str) -> None:
     for key, item in value.items():
         validate_annotation_value(key_type, key, path=f"{path}.key")
         validate_annotation_value(item_type, item, path=f"{path}[{key!r}]")
+
+
+def _validate_callable(value: object, path: str) -> None:
+    if not callable(value):
+        raise TypeError(f"{path} must be callable; got {type(value).__name__}.")
 
 
 def _annotation_label(annotation: object) -> str:
