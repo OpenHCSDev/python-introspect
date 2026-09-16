@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import MISSING, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -19,7 +19,6 @@ from typing import (
 from .annotation_types import is_union_type
 from .validation import validate_annotated_dataclass, validate_annotation_value
 
-
 DataclassT = TypeVar("DataclassT")
 
 
@@ -31,8 +30,7 @@ def dataclass_from_mapping(
 
     if not isinstance(target_type, type) or not is_dataclass(target_type):
         raise TypeError(
-            "dataclass_from_mapping requires a dataclass type; "
-            f"got {target_type!r}."
+            "dataclass_from_mapping requires a dataclass type; " f"got {target_type!r}."
         )
     if not isinstance(values, Mapping):
         raise TypeError("dataclass_from_mapping requires a mapping.")
@@ -58,7 +56,10 @@ def dataclass_from_mapping(
     missing: list[str] = []
     for declared_field in declared_fields:
         if declared_field.name not in values:
-            if declared_field.default is MISSING and declared_field.default_factory is MISSING:
+            if (
+                declared_field.default is MISSING
+                and declared_field.default_factory is MISSING
+            ):
                 missing.append(declared_field.name)
             continue
         annotation = annotations.get(declared_field.name, declared_field.type)
@@ -154,9 +155,7 @@ def _mapping_value_for_annotation(
         if len(successes) == 1:
             return successes[0]
         exact_matches = tuple(
-            converted
-            for converted in successes
-            if type(converted) is type(value)
+            converted for converted in successes if type(converted) is type(value)
         )
         if len(exact_matches) == 1:
             return exact_matches[0]
@@ -164,9 +163,7 @@ def _mapping_value_for_annotation(
             raise TypeError(
                 f"{path} ambiguously matches multiple members of {annotation!r}."
             )
-        value_errors = tuple(
-            error for error in errors if isinstance(error, ValueError)
-        )
+        value_errors = tuple(error for error in errors if isinstance(error, ValueError))
         if len(value_errors) == 1:
             raise value_errors[0]
         if value_errors:
@@ -197,7 +194,9 @@ def _mapping_value_for_annotation(
                 for index, item in enumerate(value)
             )
         if member_types and len(value) != len(member_types):
-            raise ValueError(f"{path} must contain {len(member_types)} item(s); got {len(value)}.")
+            raise ValueError(
+                f"{path} must contain {len(member_types)} item(s); got {len(value)}."
+            )
         return tuple(
             _mapping_value_for_annotation(
                 member_type,
@@ -206,13 +205,19 @@ def _mapping_value_for_annotation(
             )
             for index, (member_type, item) in enumerate(zip(member_types, value))
         )
-    if origin is list:
-        if not isinstance(value, list):
+    if origin in {list, Sequence}:
+        if (origin is list and not isinstance(value, list)) or (
+            origin is Sequence
+            and (
+                not isinstance(value, Sequence)
+                or isinstance(value, (str, bytes, bytearray))
+            )
+        ):
             raise TypeError(f"{path} must be an array.")
         member_types = get_args(annotation)
         if not member_types:
-            return list(value)
-        return [
+            return list(value) if origin is list else tuple(value)
+        converted = [
             _mapping_value_for_annotation(
                 member_types[0],
                 item,
@@ -220,6 +225,7 @@ def _mapping_value_for_annotation(
             )
             for index, item in enumerate(value)
         ]
+        return converted if origin is list else tuple(converted)
     if origin in {dict, Mapping}:
         if not isinstance(value, Mapping):
             raise TypeError(f"{path} must be an object.")
@@ -250,7 +256,9 @@ def _mapping_value_for_annotation(
             return annotation(value)
         except ValueError as error:
             choices = tuple(member.value for member in annotation)
-            raise ValueError(f"{path} must be one of {choices!r}; got {value!r}.") from error
+            raise ValueError(
+                f"{path} must be one of {choices!r}; got {value!r}."
+            ) from error
     if isinstance(annotation, type) and is_dataclass(annotation):
         if isinstance(value, annotation):
             return value

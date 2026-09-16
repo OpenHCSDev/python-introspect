@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+from collections.abc import Sequence
 
 import pytest
 
@@ -34,6 +35,59 @@ class StoredEnvelope:
 @dataclass(frozen=True)
 class UntypedTupleEnvelope:
     values: tuple
+
+
+@dataclass(frozen=True)
+class RecursiveSequenceNode:
+    name: str
+    children: Sequence["RecursiveSequenceNode"] = ()
+
+
+@dataclass(frozen=True)
+class SequenceEnvelope:
+    nodes: Sequence[RecursiveSequenceNode]
+
+
+@pytest.mark.parametrize("container", (list, tuple))
+def test_dataclass_mapping_recurses_from_abstract_sequence_annotations(container):
+    result = dataclass_from_mapping(
+        SequenceEnvelope,
+        {
+            "nodes": container([{"name": "parent", "children": [{"name": "child"}]}]),
+        },
+    )
+    assert result == SequenceEnvelope(
+        (RecursiveSequenceNode("parent", (RecursiveSequenceNode("child"),)),)
+    )
+
+
+@pytest.mark.parametrize(
+    "value", ("text", b"bytes", bytearray(b"bytes"), {"name": "mapping"}, 7)
+)
+def test_dataclass_mapping_sequence_rejects_non_array_values(value):
+    with pytest.raises(TypeError, match="must be an array"):
+        dataclass_from_mapping(SequenceEnvelope, {"nodes": value})
+
+
+def test_dataclass_mapping_recursive_sequence_rejects_unknown_fields_and_wrong_elements():
+    with pytest.raises(ValueError, match="undeclared.*extra"):
+        dataclass_from_mapping(
+            SequenceEnvelope,
+            {
+                "nodes": [
+                    {"name": "parent", "children": [{"name": "child", "extra": 1}]}
+                ]
+            },
+        )
+    with pytest.raises(TypeError, match="must be an object"):
+        dataclass_from_mapping(SequenceEnvelope, {"nodes": [42]})
+
+
+def test_dataclass_mapping_abstract_sequence_preserves_typed_members():
+    node = RecursiveSequenceNode("typed")
+    assert dataclass_from_mapping(
+        SequenceEnvelope, {"nodes": [node]}
+    ) == SequenceEnvelope((node,))
 
 
 def test_dataclass_mapping_uses_nested_types_as_the_schema() -> None:
