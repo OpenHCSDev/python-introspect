@@ -9,6 +9,9 @@ resolvers to extend functionality without modifying this code.
 
 import ast
 import inspect
+import sys
+import linecache
+from functools import lru_cache
 import dataclasses
 import re
 from abc import ABC, abstractmethod
@@ -970,6 +973,56 @@ class SignatureAnalyzer:
             return {}
 
     @staticmethod
+    def prepare_dataclass_declaration(dataclass_type: type) -> None:
+        """Warm pure source lookup without evaluating fields or default factories."""
+        SignatureAnalyzer._extract_inline_field_docs(dataclass_type)
+
+    @staticmethod
+    def _dataclass_source(dataclass_type: type) -> str:
+        """Read current loader source, deriving its class block by immutable content."""
+        # Python 3.13+ locates class source from __firstlineno__ directly;
+        # its native locator does not perform the repeated module AST traversal.
+        if sys.version_info >= (3, 13):
+            return inspect.getsource(dataclass_type)
+        target = inspect.unwrap(dataclass_type)
+        if not inspect.isclass(target):
+            return inspect.getsource(target)
+        file = inspect.getsourcefile(target)
+        if file:
+            linecache.checkcache(file)
+        else:
+            file = inspect.getfile(target)
+            if not (file.startswith('<') and file.endswith('>')):
+                raise OSError('source code not available')
+        module = inspect.getmodule(target, file)
+        lines = linecache.getlines(file, module.__dict__) if module else linecache.getlines(file)
+        if not lines:
+            raise OSError('could not get source code')
+        source = SignatureAnalyzer._qualified_class_source(''.join(lines), target.__qualname__)
+        if source is None:
+            raise OSError('could not find class definition')
+        return source
+
+    @staticmethod
+    @lru_cache(maxsize=32)
+    def _module_source_tree(source: str) -> ast.AST:
+        """Parse current immutable module bytes once; never expose the retained AST."""
+        return ast.parse(source)
+
+    @staticmethod
+    @lru_cache(maxsize=256)
+    def _qualified_class_source(source: str, qualname: str) -> Optional[str]:
+        """Use Python's qualified class/decorator locator on current source content."""
+        tree = SignatureAnalyzer._module_source_tree(source)
+        finder = inspect._ClassFinder(qualname)
+        try:
+            finder.visit(tree)
+        except inspect.ClassFoundException as found:
+            lines = source.splitlines(keepends=True)
+            return ''.join(inspect.getblock(lines[found.args[0]:]))
+        return None
+
+    @staticmethod
     def _extract_inline_field_docs(dataclass_type: type) -> Dict[str, str]:
         """Extract inline field documentation strings using AST parsing.
 
@@ -1002,7 +1055,7 @@ class SignatureAnalyzer:
             # Try to get source code - handle cases where it might not be available
             source = None
             try:
-                source = inspect.getsource(dataclass_type)
+                source = SignatureAnalyzer._dataclass_source(dataclass_type)
             except (OSError, TypeError):
                 try:
                     source_file = inspect.getfile(dataclass_type)
