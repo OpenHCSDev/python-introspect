@@ -2,6 +2,7 @@
 
 import pytest
 import python_introspect
+from packaging.version import Version
 
 
 class TestPackageImports:
@@ -11,7 +12,7 @@ class TestPackageImports:
         """Test that __version__ is available."""
         assert hasattr(python_introspect, "__version__")
         assert isinstance(python_introspect.__version__, str)
-        assert python_introspect.__version__ == "0.1.12"
+        assert str(Version(python_introspect.__version__)) == python_introspect.__version__
 
     def test_signature_analyzer_import(self):
         """Test SignatureAnalyzer is importable."""

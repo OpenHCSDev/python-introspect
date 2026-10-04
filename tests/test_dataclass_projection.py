@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from collections.abc import Sequence
 
@@ -46,6 +46,82 @@ class RecursiveSequenceNode:
 @dataclass(frozen=True)
 class SequenceEnvelope:
     nodes: Sequence[RecursiveSequenceNode]
+
+
+@dataclass(frozen=True)
+class ConnectionWithSummary(Connection):
+    summary: tuple[str, int] = field(init=False)
+    effective_mode: Mode = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "summary", (self.host, self.port))
+        object.__setattr__(self, "effective_mode", self.mode or Mode.IPC)
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedDefaults:
+    count: int
+    label: str = field(init=False, default="counter")
+    connections: list[Connection] = field(init=False, default_factory=list)
+
+
+@dataclass(frozen=True)
+class DerivedEnvelope:
+    connection: ConnectionWithSummary
+
+
+def test_dataclass_mapping_verifies_inherited_post_init_fields() -> None:
+    original = ConnectionWithSummary("localhost", 7888, Mode.TCP)
+    values = asdict(original)
+    values.update(mode="tcp", effective_mode="tcp", summary=["localhost", 7888])
+    assert dataclass_from_mapping(ConnectionWithSummary, values) == original
+    assert dataclass_from_mapping(
+        ConnectionWithSummary, {"host": "localhost", "port": 7888}
+    ) == ConnectionWithSummary("localhost", 7888)
+
+
+@pytest.mark.parametrize(
+    "overrides,error_type,match",
+    (
+        ({"summary": ["elsewhere", 7888]}, ValueError, "summary.*disagrees"),
+        ({"effective_mode": "tcp"}, ValueError, "effective_mode.*disagrees"),
+        ({"summary": ["localhost", True]}, TypeError, "must be int"),
+        ({"effective_mode": "invalid"}, ValueError, "must be one of"),
+        ({"extra": 1}, ValueError, "undeclared.*extra"),
+    ),
+)
+def test_dataclass_mapping_cannot_override_derived_owner(overrides, error_type, match):
+    values = {"host": "localhost", "port": 7888, **overrides}
+    with pytest.raises(error_type, match=match):
+        dataclass_from_mapping(ConnectionWithSummary, values)
+
+
+def test_dataclass_mapping_verifies_non_init_defaults_and_nested_derived_fields() -> None:
+    original = DerivedDefaults(3)
+    assert dataclass_from_mapping(DerivedDefaults, asdict(original)) == original
+    assert dataclass_from_mapping(DerivedDefaults, {"count": 3}) == original
+    with pytest.raises(ValueError, match="connections.*disagrees"):
+        dataclass_from_mapping(
+            DerivedDefaults,
+            {"count": 3, "connections": [{"host": "localhost", "port": 7888}]},
+        )
+    values = {
+        "connection": {
+            "host": "localhost", "port": 7888,
+            "summary": ["localhost", 7888], "effective_mode": "ipc",
+        }
+    }
+    assert dataclass_from_mapping(DerivedEnvelope, values) == DerivedEnvelope(
+        ConnectionWithSummary("localhost", 7888)
+    )
+    values["connection"]["effective_mode"] = "tcp"
+    with pytest.raises(ValueError, match="effective_mode.*disagrees"):
+        dataclass_from_mapping(DerivedEnvelope, values)
+
+
+def test_dataclass_mapping_derived_defaults_do_not_supply_missing_init_fields() -> None:
+    with pytest.raises(ValueError, match="missing required field.*count"):
+        dataclass_from_mapping(DerivedDefaults, {"label": "counter"})
 
 
 @pytest.mark.parametrize("container", (list, tuple))

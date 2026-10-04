@@ -26,7 +26,11 @@ def dataclass_from_mapping(
     target_type: type[DataclassT],
     values: Mapping[str, object],
 ) -> DataclassT:
-    """Construct one dataclass from the fields declared by its class."""
+    """Construct declared init fields and verify supplied constructor-owned fields.
+
+    Non-init fields belong to the dataclass's defaults or post-init behavior,
+    not the input mapping. If supplied, they must agree with that owner.
+    """
 
     if not isinstance(target_type, type) or not is_dataclass(target_type):
         raise TypeError(
@@ -41,9 +45,7 @@ def dataclass_from_mapping(
             f"got {non_text_keys!r}."
         )
 
-    declared_fields = tuple(
-        declared_field for declared_field in fields(target_type) if declared_field.init
-    )
+    declared_fields = fields(target_type)
     declared_names = {declared_field.name for declared_field in declared_fields}
     extras = tuple(sorted(set(values) - declared_names))
     if extras:
@@ -52,18 +54,19 @@ def dataclass_from_mapping(
         )
 
     annotations = get_type_hints(target_type, include_extras=True)
-    constructor_values: dict[str, object] = {}
+    decoded_values: dict[str, object] = {}
     missing: list[str] = []
     for declared_field in declared_fields:
         if declared_field.name not in values:
             if (
-                declared_field.default is MISSING
+                declared_field.init
+                and declared_field.default is MISSING
                 and declared_field.default_factory is MISSING
             ):
                 missing.append(declared_field.name)
             continue
         annotation = annotations.get(declared_field.name, declared_field.type)
-        constructor_values[declared_field.name] = _mapping_value_for_annotation(
+        decoded_values[declared_field.name] = _mapping_value_for_annotation(
             annotation,
             values[declared_field.name],
             path=f"{target_type.__name__}.{declared_field.name}",
@@ -73,8 +76,23 @@ def dataclass_from_mapping(
             f"{target_type.__name__} is missing required field(s): {', '.join(missing)}."
         )
 
-    result = target_type(**constructor_values)
+    result = target_type(
+        **{
+            declared_field.name: decoded_values[declared_field.name]
+            for declared_field in declared_fields
+            if declared_field.init and declared_field.name in decoded_values
+        }
+    )
     validate_annotated_dataclass(result)
+    for declared_field in declared_fields:
+        if not declared_field.init and declared_field.name in decoded_values:
+            if decoded_values[declared_field.name] != object.__getattribute__(
+                result, declared_field.name
+            ):
+                raise ValueError(
+                    f"{target_type.__name__}.{declared_field.name} disagrees with "
+                    "its constructed value."
+                )
     return result
 
 

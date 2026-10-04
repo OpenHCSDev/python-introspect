@@ -10,6 +10,7 @@ signature defaults through one extensible API.
 
    extensions
    api
+   derived-field-decoding
    development
 
 Quick start
