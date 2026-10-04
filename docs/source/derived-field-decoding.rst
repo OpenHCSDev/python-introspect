@@ -56,3 +56,26 @@ tuple conversion, nested derived DTOs, omitted derived fields, factory defaults,
 contradictory derived values, invalid annotated values, unknown keys and missing
 constructor fields. Verification results and actual OpenHCS receiving acceptance
 are recorded separately; dependency tests alone do not establish CLI readiness.
+
+The first focused run passed 37 tests. The first entire dependency run passed
+143 tests with one stale test failure: ``test_version_available`` still pinned
+0.1.12 although dependency main had already released source version 0.1.15.
+That test now checks the canonical PEP 440 version through ``packaging.Version``
+instead of adding a third literal version authority. The existing immutable
+release action remains responsible for agreement between release metadata,
+artifacts and tag; no release assertion is weakened here.
+
+The original saved OpenHCS registration-status reply from PR 567's receiving
+attempt decoded as ``registered`` with zero errors and one published source.
+Contradictory outcome, boolean outcome and undeclared keys were rejected. This
+was a read-only decode of the original canonical receipt, not a registration
+replay or a new native runtime. The qualified OpenHCS import unexpectedly peaked
+at 7,490,312 KiB; that process exited normally and the integration workers were
+informed of the actual cost. It is not a lightweight dependency-only check.
+Full client entrypoint acceptance remains separately assigned to PR 579's owner.
+
+After that stale internal-version assertion was migrated, the entire dependency
+suite passed: 144 tests in 0.80 seconds using the existing Python 3.12 environment
+and this checkout's ``src`` on ``PYTHONPATH``. No environment or installed
+package was changed. This is dependency source acceptance plus the real saved
+OpenHCS DTO acceptance, not fresh installed-client or registry publication proof.
