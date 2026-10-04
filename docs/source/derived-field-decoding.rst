@@ -79,3 +79,9 @@ suite passed: 144 tests in 0.80 seconds using the existing Python 3.12 environme
 and this checkout's ``src`` on ``PYTHONPATH``. No environment or installed
 package was changed. This is dependency source acceptance plus the real saved
 OpenHCS DTO acceptance, not fresh installed-client or registry publication proof.
+
+Release source follows the existing version convention: project metadata and
+runtime declaration are advanced together to 0.1.16. Remote 0.1.15 is merged
+source but has no public tag or published distribution; the new patch release
+includes it. The existing immutable-tag publication workflow remains the
+publication owner. A version edit or merged PR is not registry publication.
