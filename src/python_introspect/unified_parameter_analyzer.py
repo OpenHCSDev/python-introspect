@@ -13,7 +13,6 @@ import inspect
 import dataclasses
 from abc import ABC, abstractmethod
 from typing import Dict, Union, Callable, Type, Any, Optional, ClassVar
-from dataclasses import dataclass
 from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
@@ -59,29 +58,6 @@ def add_parameter_exclusions(
     set_parameter_exclusions(target, (*parameter_exclusions(target), *normalized))
 
 
-@dataclass
-class UnifiedParameterInfo:
-    """Unified parameter information that works for all parameter sources."""
-    name: str
-    param_type: Type
-    default_value: Any
-    is_required: bool
-    description: Optional[str] = None
-    source_type: str = "unknown"  # "function", "dataclass", "nested"
-    
-    @classmethod
-    def from_parameter_info(cls, param_info: ParameterInfo, source_type: str = "function") -> "UnifiedParameterInfo":
-        """Convert from existing ParameterInfo to unified format."""
-        return cls(
-            name=param_info.name,
-            param_type=param_info.param_type,
-            default_value=param_info.default_value,
-            is_required=param_info.is_required,
-            description=param_info.description,
-            source_type=source_type
-        )
-
-
 class UnifiedParameterTargetAnalyzer(ABC, metaclass=AutoRegisterMeta):
     """Nominal target-kind family for unified parameter analysis."""
 
@@ -91,7 +67,7 @@ class UnifiedParameterTargetAnalyzer(ABC, metaclass=AutoRegisterMeta):
     target_kind: ClassVar[Optional[str]] = None
 
     @classmethod
-    def analyze_target(cls, target: Union[Callable, Type, object]) -> Dict[str, UnifiedParameterInfo]:
+    def analyze_target(cls, target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
         """Analyze a target using the first registered target-kind analyzer."""
         for analyzer_cls in cls.__registry__.values():
             analyzer = analyzer_cls()
@@ -104,7 +80,7 @@ class UnifiedParameterTargetAnalyzer(ABC, metaclass=AutoRegisterMeta):
         """Return whether this analyzer owns the target."""
 
     @abstractmethod
-    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, UnifiedParameterInfo]:
+    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
         """Analyze the target."""
 
 
@@ -116,7 +92,7 @@ class CallableTargetAnalyzer(UnifiedParameterTargetAnalyzer):
     def matches(self, target: Union[Callable, Type, object]) -> bool:
         return callable(target) and not inspect.isclass(target)
 
-    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, UnifiedParameterInfo]:
+    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
         return UnifiedParameterAnalyzer._analyze_callable(target)
 
 
@@ -128,7 +104,7 @@ class DataclassTypeTargetAnalyzer(UnifiedParameterTargetAnalyzer):
     def matches(self, target: Union[Callable, Type, object]) -> bool:
         return inspect.isclass(target) and dataclasses.is_dataclass(target)
 
-    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, UnifiedParameterInfo]:
+    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
         return UnifiedParameterAnalyzer._analyze_dataclass_type(target)
 
 
@@ -140,7 +116,7 @@ class ClassTargetAnalyzer(UnifiedParameterTargetAnalyzer):
     def matches(self, target: Union[Callable, Type, object]) -> bool:
         return inspect.isclass(target)
 
-    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, UnifiedParameterInfo]:
+    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
         return UnifiedParameterAnalyzer._analyze_callable(target.__init__)
 
 
@@ -152,7 +128,7 @@ class DataclassInstanceTargetAnalyzer(UnifiedParameterTargetAnalyzer):
     def matches(self, target: Union[Callable, Type, object]) -> bool:
         return dataclasses.is_dataclass(target)
 
-    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, UnifiedParameterInfo]:
+    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
         return UnifiedParameterAnalyzer._analyze_dataclass_instance(target)
 
 
@@ -164,7 +140,7 @@ class ObjectInstanceTargetAnalyzer(UnifiedParameterTargetAnalyzer):
     def matches(self, target: Union[Callable, Type, object]) -> bool:
         return True
 
-    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, UnifiedParameterInfo]:
+    def analyze(self, target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
         return UnifiedParameterAnalyzer._analyze_object_instance(target)
 
 
@@ -177,7 +153,7 @@ class UnifiedParameterAnalyzer:
     """
     
     @staticmethod
-    def analyze(target: Union[Callable, Type, object], exclude_params: Optional[list] = None) -> Dict[str, UnifiedParameterInfo]:
+    def analyze(target: Union[Callable, Type, object], exclude_params: Optional[list] = None) -> Dict[str, ParameterInfo]:
         """Analyze parameters from any source.
 
         Args:
@@ -185,7 +161,7 @@ class UnifiedParameterAnalyzer:
             exclude_params: Optional list of parameter names to exclude from analysis
 
         Returns:
-            Dictionary mapping parameter names to UnifiedParameterInfo objects
+            Dictionary mapping parameter names to ParameterInfo objects
 
         Examples:
             # Function analysis
@@ -229,40 +205,17 @@ class UnifiedParameterAnalyzer:
         return frozenset(names)
     
     @staticmethod
-    def _analyze_callable(callable_obj: Callable) -> Dict[str, UnifiedParameterInfo]:
+    def _analyze_callable(callable_obj: Callable) -> Dict[str, ParameterInfo]:
         """Analyze a callable (function, method, etc.)."""
-        # Use existing SignatureAnalyzer for callables
-        param_info_dict = SignatureAnalyzer.analyze(callable_obj)
-
-        # Convert to unified format
-        unified_params = {}
-        for name, param_info in param_info_dict.items():
-            unified_params[name] = UnifiedParameterInfo.from_parameter_info(
-                param_info,
-                source_type="function"
-            )
-
-        return unified_params
-    
-    @staticmethod
-    def _analyze_dataclass_type(dataclass_type: Type) -> Dict[str, UnifiedParameterInfo]:
-        """Analyze a dataclass type using existing SignatureAnalyzer infrastructure."""
-        # CRITICAL FIX: Use existing SignatureAnalyzer._analyze_dataclass method
-        # which already handles all the docstring extraction properly
-        param_info_dict = SignatureAnalyzer._analyze_dataclass(dataclass_type)
-
-        # Convert to unified format
-        unified_params = {}
-        for name, param_info in param_info_dict.items():
-            unified_params[name] = UnifiedParameterInfo.from_parameter_info(
-                param_info,
-                source_type="dataclass"
-            )
-
-        return unified_params
+        return SignatureAnalyzer.analyze(callable_obj)
 
     @staticmethod
-    def _analyze_object_instance(instance: object) -> Dict[str, UnifiedParameterInfo]:
+    def _analyze_dataclass_type(dataclass_type: Type) -> Dict[str, ParameterInfo]:
+        """Analyze a dataclass through its authoritative field declarations."""
+        return SignatureAnalyzer._analyze_dataclass(dataclass_type)
+
+    @staticmethod
+    def _analyze_object_instance(instance: object) -> Dict[str, ParameterInfo]:
         """Analyze a regular object instance by examining its full inheritance hierarchy.
 
         For dynamic containers like SimpleNamespace (which use **kwargs in __init__),
@@ -295,8 +248,9 @@ class UnifiedParameterAnalyzer:
                 class_params = UnifiedParameterAnalyzer._analyze_callable(cls.__init__)
 
                 # Remove 'self' parameter
-                if 'self' in class_params:
-                    del class_params['self']
+                class_params = {
+                    name: info for name, info in class_params.items() if name != 'self'
+                }
 
                 _logger.debug(f"🔧 _analyze_object_instance: cls={cls.__name__}, class_params after removing self={list(class_params.keys())}")
 
@@ -312,14 +266,7 @@ class UnifiedParameterAnalyzer:
                 # Add parameters that haven't been seen yet (most specific wins)
                 for param_name, param_info in class_params.items():
                     if param_name not in all_params and param_name != 'kwargs':
-                        all_params[param_name] = UnifiedParameterInfo(
-                            name=param_name,
-                            param_type=param_info.param_type,
-                            default_value=param_info.default_value,
-                            is_required=param_info.is_required,
-                            description=param_info.description,
-                            source_type="object_instance"
-                        )
+                        all_params[param_name] = param_info
 
             except Exception:
                 # Skip classes that can't be analyzed - this is legitimate since some classes
@@ -337,67 +284,21 @@ class UnifiedParameterAnalyzer:
                     continue
                 # Infer type from value
                 attr_type = type(attr_value) if attr_value is not None else type(None)
-                all_params[attr_name] = UnifiedParameterInfo(
+                all_params[attr_name] = ParameterInfo(
                     name=attr_name,
                     param_type=attr_type,
                     default_value=attr_value,
                     is_required=False,
-                    description=None,
-                    source_type="dynamic_attr"
+                    description=None
                 )
             _logger.debug(f"🔧 _analyze_object_instance: after fallback, all_params={list(all_params.keys())}")
 
         return all_params
 
     @staticmethod
-    def _analyze_dataclass_instance(instance: object) -> Dict[str, UnifiedParameterInfo]:
+    def _analyze_dataclass_instance(instance: object) -> Dict[str, ParameterInfo]:
         """Analyze a dataclass instance.
 
         Uses current instance values as defaults.
         """
-        param_info_dict = SignatureAnalyzer.analyze(instance)
-        return {
-            name: UnifiedParameterInfo.from_parameter_info(
-                param_info,
-                source_type="dataclass_instance",
-            )
-            for name, param_info in param_info_dict.items()
-        }
-    
-    @staticmethod
-    def analyze_nested(
-        target: Union[Callable, Type, object],
-        parent_info: Dict[str, UnifiedParameterInfo] = None,
-    ) -> Dict[str, UnifiedParameterInfo]:
-        """Analyze parameters with nested dataclass support.
-        
-        This method provides enhanced analysis that can handle nested dataclasses
-        and maintain parent context information.
-        
-        Args:
-            target: The target to analyze
-            parent_info: Optional parent parameter information for context
-            
-        Returns:
-            Dictionary of unified parameter information with nested support
-        """
-        base_params = UnifiedParameterAnalyzer.analyze(target)
-        
-        # For each parameter, check if it's a nested dataclass
-        enhanced_params = {}
-        for name, param_info in base_params.items():
-            enhanced_params[name] = param_info
-            
-            # If this parameter is a dataclass, mark it as having nested structure
-            if dataclasses.is_dataclass(param_info.param_type):
-                # Update source type to indicate nesting capability
-                enhanced_params[name] = UnifiedParameterInfo(
-                    name=param_info.name,
-                    param_type=param_info.param_type,
-                    default_value=param_info.default_value,
-                    is_required=param_info.is_required,
-                    description=param_info.description,
-                    source_type=f"{param_info.source_type}_nested"
-                )
-        
-        return enhanced_params
+        return SignatureAnalyzer.analyze(instance)

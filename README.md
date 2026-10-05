@@ -58,3 +58,19 @@ changes are checked by the repository's [documentation
 workflow](https://github.com/OpenHCSDev/python-introspect/actions/workflows/docs.yml);
 the local warnings-as-errors build command is documented in
 [`development.rst`](docs/source/development.rst).
+
+### Parameter declarations in 0.2
+
+`UnifiedParameterAnalyzer` now returns the original `ParameterInfo` declarations
+from `SignatureAnalyzer`. `UnifiedParameterInfo`, its `source_type` tag, and
+`analyze_nested` were removed. Use `analyze` and the declared `param_type` for
+parameter topology.
+
+`ParameterInfo` retains its five public fields, constructor and `_replace`
+operation, and is now a frozen declaration rather than a tuple. Tuple unpacking
+and NamedTuple helpers are no longer supported. Dataclass descriptions are
+derived on first help access; value/default overlays preserve that deferred
+source, and renaming preserves the original field's help. Callable descriptions
+still participate eagerly in inferred parameter types. A presentation extraction
+error yields absent help without discarding valid types/defaults. Factory errors
+remain uncached and retryable.

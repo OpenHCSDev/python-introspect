@@ -15,7 +15,7 @@ from functools import lru_cache
 import dataclasses
 import re
 from abc import ABC, abstractmethod
-from typing import Annotated, Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type, List, ClassVar, Tuple, get_args, get_origin
+from typing import Annotated, Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type, List, ClassVar, Tuple, get_args, get_origin, Iterable
 from weakref import WeakKeyDictionary
 
 from dataclasses import dataclass, field
@@ -146,13 +146,71 @@ class AnalysisConstants:
 CONSTANTS = AnalysisConstants()
 
 
-class ParameterInfo(NamedTuple):
-    """Information about a parameter."""
+@dataclass(frozen=True, init=False, eq=False)
+class ParameterInfo:
+    """Admitted parameter values with presentation derived from their declaration.
+
+    Callable descriptions remain concrete because they can determine inferred
+    types. Dataclass descriptions are requested independently of value admission.
+    """
+
     name: str
     param_type: type
     default_value: Any
     is_required: bool
-    description: Optional[str] = None  # Add parameter description from docstring
+    _description: Optional[str]
+    _description_owner: Optional[type]
+
+    def __init__(
+        self, name: str, param_type: type, default_value: Any, is_required: bool,
+        description: Optional[str] = None, *, description_owner: Optional[type] = None,
+    ):
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "param_type", param_type)
+        object.__setattr__(self, "default_value", default_value)
+        object.__setattr__(self, "is_required", is_required)
+        object.__setattr__(self, "_description", description)
+        object.__setattr__(self, "_description_owner", description_owner)
+
+    @property
+    def description(self) -> Optional[str]:
+        if self._description_owner is not None:
+            SignatureAnalyzer._materialize_dataclass_descriptions(self._description_owner, self)
+        return self._description
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ParameterInfo):
+            return NotImplemented
+        return (
+            self.name, self.param_type, self.default_value, self.is_required, self.description,
+        ) == (
+            other.name, other.param_type, other.default_value, other.is_required, other.description,
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.name, self.param_type, self.default_value, self.is_required, self.description))
+
+    def _replace(self, **changes: Any) -> "ParameterInfo":
+        """Replace declared fields through the same public parameter owner."""
+        values = dict(
+            name=self.name, param_type=self.param_type,
+            default_value=self.default_value, is_required=self.is_required,
+            description=self._description,
+        )
+        unknown = changes.keys() - values.keys()
+        if unknown:
+            raise ValueError(f"Got unexpected field names: {sorted(unknown)!r}")
+        owner = self._description_owner
+        if "description" in changes:
+            owner = None
+        elif "name" in changes and changes["name"] != self.name:
+            # A renamed field keeps the original declaration's help, rather
+            # than querying a different field in the same source class.
+            values["description"] = self.description
+            owner = None
+        values.update(changes)
+        return type(self)(**values, description_owner=owner)
+
 
 class DocstringInfo(NamedTuple):
     """Information extracted from a docstring."""
@@ -713,6 +771,70 @@ class CallableAnalysisContext:
         )
 
 
+class ClassSourceDeclaration(NamedTuple):
+    """Immutable located class source and its source-only documentation views."""
+
+    source: str
+    inline_docs: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...]
+
+    @classmethod
+    def from_block(cls, source: str, tree: ast.AST, first_line: int = 1) -> "ClassSourceDeclaration":
+        # The public extractor historically parses the selected block without
+        # dedenting. Keep nested/local blocks' empty inline-documentation view.
+        first = next((line for line in source.splitlines() if line.strip()), '')
+        if first[:1].isspace():
+            return cls(source, ())
+        source_lines = source.split('\n')
+        declarations = []
+        for class_node in ast.walk(tree):
+            if not isinstance(class_node, ast.ClassDef):
+                continue
+            field_docs = {}
+
+            # Method 1: Look for field assignments followed by string literals (next line)
+            for i, node in enumerate(class_node.body):
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                    field_name = node.target.id
+
+                    # Check if the next node is a string literal (documentation)
+                    if i + 1 < len(class_node.body):
+                        next_node = class_node.body[i + 1]
+                        if isinstance(next_node, ast.Expr):
+                            if isinstance(next_node.value, ast.Constant) and isinstance(next_node.value.value, str):
+                                field_docs[field_name] = next_node.value.value.strip()
+                                continue
+
+                    # Method 2: Check for inline comments on the same line
+                    # Get the line number of the field definition
+                    field_line_num = node.lineno - first_line
+                    if 0 <= field_line_num < len(source_lines):
+                        line = source_lines[field_line_num]
+
+                        # Look for string literals in comments on the same line
+                        # Pattern: field: type = value  # """Documentation"""
+                        comment_match = re.search(r'#\s*["\']([^"\']+)["\']', line)
+                        if comment_match:
+                            field_docs[field_name] = comment_match.group(1).strip()
+                            continue
+
+                        # Look for triple-quoted strings on the same line
+                        # Pattern: field: type = value  """Documentation"""
+                        triple_quote_match = re.search(r'"""([^"]+)"""|\'\'\'([^\']+)\'\'\'', line)
+                        if triple_quote_match:
+                            doc_text = triple_quote_match.group(1) or triple_quote_match.group(2)
+                            field_docs[field_name] = doc_text.strip()
+
+            declarations.append((class_node.name, tuple(field_docs.items())))
+        return cls(source, tuple(declarations))
+
+    def field_documentation(self, class_name: str) -> Dict[str, str]:
+        """Return a fresh view selected by the caller's current public name."""
+        for name, entries in self.inline_docs:
+            if name == class_name:
+                return dict(entries)
+        return {}
+
+
 class SignatureAnalyzer:
     """Universal analyzer for extracting parameter information from any target."""
 
@@ -907,16 +1029,6 @@ class SignatureAnalyzer:
             except Exception:
                 type_hints = inspect.get_annotations(dataclass_type, eval_str=False)
 
-            # Extract docstring information from dataclass
-            docstring_info = DocstringExtractor.extract(dataclass_type)
-
-            # Extract inline field documentation using AST
-            inline_docs = SignatureAnalyzer._extract_inline_field_docs(dataclass_type)
-
-            # ENHANCEMENT: For dataclasses modified by decorators,
-            # also extract field documentation from the field types themselves
-            field_type_docs = SignatureAnalyzer._extract_field_type_docs(dataclass_type)
-
             parameters = {}
 
             for field in dataclasses.fields(dataclass_type):
@@ -937,31 +1049,12 @@ class SignatureAnalyzer:
                     default_value = None
                     is_required = True
 
-                # Get field description from multiple sources (priority order)
-                field_description = None
-
-                # 1. Field metadata (highest priority)
-                if 'description' in field.metadata:
-                    field_description = field.metadata['description']
-                # 2. Inline documentation strings (from AST parsing)
-                elif field.name in inline_docs:
-                    field_description = inline_docs[field.name]
-                # 3. Field type documentation (for decorator-modified classes)
-                elif field.name in field_type_docs:
-                    field_description = field_type_docs[field.name]
-                # 4. Docstring parameters (fallback)
-                elif docstring_info.parameters and field.name in docstring_info.parameters:
-                    field_description = docstring_info.parameters.get(field.name)
-                # 5. CRITICAL FIX: Use inheritance-aware field documentation extraction
-                else:
-                    field_description = SignatureAnalyzer.extract_field_documentation(dataclass_type, field.name)
-
                 parameters[field.name] = ParameterInfo(
                     name=field.name,
                     param_type=param_type,
                     default_value=default_value,
                     is_required=is_required,
-                    description=field_description
+                    description_owner=dataclass_type,
                 )
 
             # PERFORMANCE: Cache the result to avoid re-parsing
@@ -973,20 +1066,109 @@ class SignatureAnalyzer:
             return {}
 
     @staticmethod
-    def prepare_dataclass_declaration(dataclass_type: type) -> None:
-        """Warm pure source lookup without evaluating fields or default factories."""
-        SignatureAnalyzer._extract_inline_field_docs(dataclass_type)
+    def _materialize_dataclass_descriptions(dataclass_type: type, requested: ParameterInfo) -> None:
+        """Fill presentation on the existing admitted declarations, once requested.
+
+        Presentation extraction errors no longer discard usable value/type
+        declarations. They yield absent help, matching the existing help fallback.
+        """
+        parameters = SignatureAnalyzer._dataclass_analysis_cache.get(dataclass_type, {})
+        admitted = parameters.get(requested.name)
+        if admitted is not None and admitted is not requested:
+            object.__setattr__(requested, "_description", admitted.description)
+            object.__setattr__(requested, "_description_owner", None)
+            return
+        if admitted is not requested:
+            parameters = {requested.name: requested}
+        pending = [info for info in parameters.values() if info._description_owner is not None]
+        if not pending:
+            return
+        try:
+            docstring_info = DocstringExtractor.extract(dataclass_type)
+            inline_docs = SignatureAnalyzer._extract_inline_field_docs(dataclass_type)
+            field_type_docs = SignatureAnalyzer._extract_field_type_docs(dataclass_type)
+            descriptions = {}
+            for field in dataclasses.fields(dataclass_type):
+                if field.name not in parameters:
+                    continue
+                if 'description' in field.metadata:
+                    description = field.metadata['description']
+                elif field.name in inline_docs:
+                    description = inline_docs[field.name]
+                elif field.name in field_type_docs:
+                    description = field_type_docs[field.name]
+                elif field.name in docstring_info.parameters_dict:
+                    description = docstring_info.parameters_dict[field.name]
+                else:
+                    description = SignatureAnalyzer.extract_field_documentation(dataclass_type, field.name)
+                descriptions[field.name] = description
+        except Exception:
+            descriptions = {}
+        for info in pending:
+            object.__setattr__(info, "_description", descriptions.get(info.name))
+            object.__setattr__(info, "_description_owner", None)
 
     @staticmethod
-    def _dataclass_source(dataclass_type: type) -> str:
+    def prepare_dataclass_declarations(declarations: Iterable[type]) -> None:
+        """Prepare source facts for declared schemas without resolving values.
+
+        MRO, raw annotations and declared dataclass defaults expose schema
+        relationships. Unresolved strings/ForwardRefs remain live for analysis;
+        factories, namespace providers and type resolvers are never invoked.
+        """
+        pending = list(declarations)
+        visited = set()
+        while pending:
+            declaration = pending.pop()
+            if not inspect.isclass(declaration) or declaration in visited:
+                continue
+            visited.add(declaration)
+            if declaration is object:
+                continue
+            if not dataclasses.is_dataclass(declaration):
+                continue
+            SignatureAnalyzer._extract_inline_field_docs(declaration)
+            pending.extend(
+                base for base in inspect.getmro(declaration)[1:]
+                if dataclasses.is_dataclass(base)
+            )
+            for declared_field in dataclasses.fields(declaration):
+                field_types = [declared_field.type]
+                while field_types:
+                    field_type = field_types.pop()
+                    if inspect.isclass(field_type) and dataclasses.is_dataclass(field_type):
+                        pending.append(field_type)
+                    field_types.extend(get_args(field_type))
+                if dataclasses.is_dataclass(declared_field.default):
+                    default = declared_field.default
+                    pending.append(default if inspect.isclass(default) else type(default))
+                factory = declared_field.default_factory
+                if inspect.isclass(factory) and dataclasses.is_dataclass(factory):
+                    pending.append(factory)
+
+    @staticmethod
+    def prepare_dataclass_declaration(dataclass_type: type) -> None:
+        """Prepare one declaration's source closure without evaluating defaults."""
+        SignatureAnalyzer.prepare_dataclass_declarations((dataclass_type,))
+
+    @staticmethod
+    def _dataclass_source(dataclass_type: type) -> ClassSourceDeclaration:
         """Read current loader source, deriving its class block by immutable content."""
         # Python 3.13+ locates class source from __firstlineno__ directly;
         # its native locator does not perform the repeated module AST traversal.
         if sys.version_info >= (3, 13):
-            return inspect.getsource(dataclass_type)
+            source = inspect.getsource(dataclass_type)
+            if source[:1].isspace():
+                return ClassSourceDeclaration(source, ())
+            tree = SignatureAnalyzer._module_source_tree(source)
+            class_node = next((node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)), None)
+            if class_node is None:
+                return ClassSourceDeclaration(source, ())
+            return SignatureAnalyzer._qualified_class_source(source, class_node.name)
         target = inspect.unwrap(dataclass_type)
         if not inspect.isclass(target):
-            return inspect.getsource(target)
+            source = inspect.getsource(target)
+            return ClassSourceDeclaration.from_block(source, SignatureAnalyzer._module_source_tree(source))
         file = inspect.getsourcefile(target)
         if file:
             linecache.checkcache(file)
@@ -1011,7 +1193,7 @@ class SignatureAnalyzer:
 
     @staticmethod
     @lru_cache(maxsize=256)
-    def _qualified_class_source(source: str, qualname: str) -> Optional[str]:
+    def _qualified_class_source(source: str, qualname: str) -> Optional[ClassSourceDeclaration]:
         """Use Python's qualified class/decorator locator on current source content."""
         tree = SignatureAnalyzer._module_source_tree(source)
         finder = inspect._ClassFinder(qualname)
@@ -1019,7 +1201,14 @@ class SignatureAnalyzer:
             finder.visit(tree)
         except inspect.ClassFoundException as found:
             lines = source.splitlines(keepends=True)
-            return ''.join(inspect.getblock(lines[found.args[0]:]))
+            first_line = found.args[0] + 1
+            block = ''.join(inspect.getblock(lines[found.args[0]:]))
+            class_node = next(
+                node for node in ast.walk(tree)
+                if isinstance(node, ast.ClassDef)
+                and min([node.lineno, *(decorator.lineno for decorator in node.decorator_list)]) == first_line
+            )
+            return ClassSourceDeclaration.from_block(block, class_node, first_line)
         return None
 
     @staticmethod
@@ -1049,84 +1238,22 @@ class SignatureAnalyzer:
             field_name: str = "default"
         """
         try:
-            import ast
-            import re
-
-            # Try to get source code - handle cases where it might not be available
-            source = None
             try:
-                source = SignatureAnalyzer._dataclass_source(dataclass_type)
+                declaration = SignatureAnalyzer._dataclass_source(dataclass_type)
             except (OSError, TypeError):
-                try:
-                    source_file = inspect.getfile(dataclass_type)
-                    with open(source_file, 'r', encoding='utf-8') as f:
-                        file_content = f.read()
-                    source = SignatureAnalyzer._extract_class_source_from_file(file_content, dataclass_type.__name__)
-                except Exception:
-                    pass
-
-            if not source:
-                return {}
-
-            tree = ast.parse(source)
-
-            # Find the class definition - be more flexible with class name matching
-            class_node = None
-            target_class_name = dataclass_type.__name__
-
-            # Handle cases where the class might have been renamed or modified
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    # Try exact match first
-                    if node.name == target_class_name:
-                        class_node = node
-                        break
-                    # Also try without common prefixes/suffixes that decorators might add
-
-            if not class_node:
-                return {}
-
-            field_docs = {}
-            source_lines = source.split('\n')
-
-            # Method 1: Look for field assignments followed by string literals (next line)
-            for i, node in enumerate(class_node.body):
-                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                    field_name = node.target.id
-
-                    # Check if the next node is a string literal (documentation)
-                    if i + 1 < len(class_node.body):
-                        next_node = class_node.body[i + 1]
-                        if isinstance(next_node, ast.Expr):
-                            if isinstance(next_node.value, ast.Constant) and isinstance(next_node.value.value, str):
-                                field_docs[field_name] = next_node.value.value.strip()
-                                continue
-
-                    # Method 2: Check for inline comments on the same line
-                    # Get the line number of the field definition
-                    field_line_num = node.lineno - 1  # Convert to 0-based indexing
-                    if 0 <= field_line_num < len(source_lines):
-                        line = source_lines[field_line_num]
-
-                        # Look for string literals in comments on the same line
-                        # Pattern: field: type = value  # """Documentation"""
-                        comment_match = re.search(r'#\s*["\']([^"\']+)["\']', line)
-                        if comment_match:
-                            field_docs[field_name] = comment_match.group(1).strip()
-                            continue
-
-                        # Look for triple-quoted strings on the same line
-                        # Pattern: field: type = value  """Documentation"""
-                        triple_quote_match = re.search(r'"""([^"]+)"""|\'\'\'([^\']+)\'\'\'', line)
-                        if triple_quote_match:
-                            doc_text = triple_quote_match.group(1) or triple_quote_match.group(2)
-                            field_docs[field_name] = doc_text.strip()
-
-            return field_docs
-
+                source_file = inspect.getfile(dataclass_type)
+                with open(source_file, 'r', encoding='utf-8') as source_stream:
+                    source = SignatureAnalyzer._extract_class_source_from_file(
+                        source_stream.read(), dataclass_type.__name__
+                    )
+                if not source:
+                    return {}
+                declaration = SignatureAnalyzer._qualified_class_source(source, dataclass_type.__name__)
+                if declaration is None:
+                    return {}
+            return declaration.field_documentation(dataclass_type.__name__)
         except Exception:
-            # Return empty dict if AST parsing fails
-            # Could add logging here for debugging: logger.debug(f"AST parsing failed: {e}")
+            # Preserve the extractor's unavailable/unparsable-source boundary.
             return {}
 
     @staticmethod
