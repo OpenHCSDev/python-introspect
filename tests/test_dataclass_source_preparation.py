@@ -138,7 +138,13 @@ def factory():
     module = _load_module(monkeypatch, "qualified_source_preparation", path)
     for declaration in (module.Outer, module.Outer.Inner, module.factory()):
         SignatureAnalyzer.prepare_dataclass_declaration(declaration)
-        assert SignatureAnalyzer._dataclass_source(declaration) == inspect.getsource(declaration)
+        assert SignatureAnalyzer._dataclass_source(declaration).source == inspect.getsource(declaration)
+    docs = SignatureAnalyzer._extract_inline_field_docs(module.Outer)
+    docs.clear()
+    assert SignatureAnalyzer._extract_inline_field_docs(module.Outer) == {"value": "Outer documentation"}
+    module.Outer.__name__ = "Inner"
+    assert SignatureAnalyzer._extract_inline_field_docs(module.Outer) == {"value": "Inner documentation"}
+    module.Outer.__name__ = "Outer"
     # The original inline extractor does not dedent nested blocks before parsing.
     # Source preparation preserves that behavior rather than repairing it here.
     assert SignatureAnalyzer._extract_inline_field_docs(module.Outer.Inner) == {}
@@ -161,7 +167,7 @@ class Second:
     module = _load_module(monkeypatch, "live_source_preparation", path)
     SignatureAnalyzer.prepare_dataclass_declaration(module.First)
     module.First.__qualname__ = "Second"
-    assert SignatureAnalyzer._dataclass_source(module.First) == inspect.getsource(module.First)
+    assert SignatureAnalyzer._dataclass_source(module.First).source == inspect.getsource(module.First)
     module.First.__qualname__ = "First"
     path.write_text(source.replace("First documentation", "Changed documentation"))
     os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 2))
@@ -184,7 +190,7 @@ def test_loader_source_is_read_at_original_observation_point(tmp_path, monkeypat
     SignatureAnalyzer.prepare_dataclass_declaration(module.Loaded)
     loader.source = loader.source.replace("Original documentation", "Current documentation")
     linecache.cache.pop(module.__file__, None)
-    assert SignatureAnalyzer._dataclass_source(module.Loaded) == inspect.getsource(module.Loaded)
+    assert SignatureAnalyzer._dataclass_source(module.Loaded).source == inspect.getsource(module.Loaded)
     assert SignatureAnalyzer._extract_inline_field_docs(module.Loaded) == {"value": "Current documentation"}
 
 
@@ -212,3 +218,25 @@ def test_missing_source_keeps_original_error():
     assert str(prepared.value) == str(original.value)
     SignatureAnalyzer.prepare_dataclass_declaration(int)
     assert SignatureAnalyzer._extract_inline_field_docs(int) == {}
+
+
+def test_preparation_derives_raw_schema_closure_without_resolving_forward_refs(monkeypatch):
+    calls = []
+
+    @dataclasses.dataclass
+    class Child:
+        value: int = 1
+
+    @dataclasses.dataclass
+    class Parent:
+        child: "Child" = dataclasses.field(default_factory=Child)
+        children: tuple[Child, ...] = ()
+        effect: int = dataclasses.field(default_factory=lambda: calls.append("factory"))
+
+    seen = []
+    monkeypatch.setattr(SignatureAnalyzer, "_extract_inline_field_docs", lambda declaration: seen.append(declaration))
+    SignatureAnalyzer.prepare_dataclass_declarations((Parent, Parent))
+    assert seen == [Parent, Child]
+    assert calls == []
+    assert Parent.__annotations__["child"] == "Child"
+    assert Parent not in SignatureAnalyzer._dataclass_analysis_cache
