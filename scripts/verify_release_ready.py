@@ -9,11 +9,17 @@ This script checks:
 - Dependencies are available
 """
 
-import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+from packaging.utils import InvalidName, canonicalize_name
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 
 def check_version():
@@ -48,24 +54,27 @@ def check_pyproject_toml():
         print("  ❌ pyproject.toml not found")
         return False
 
-    content = pyproject_file.read_text()
-    required_fields = {
-        'name': r'name\s*=\s*["\']openhcs["\']',
-        'version': r'version\s*=',
-        'description': r'description\s*=',
-        'authors': r'authors\s*=',
-        'build-backend': r'build-backend\s*=\s*["\']setuptools\.build_meta["\']',
-    }
-
-    all_found = True
-    for field, pattern in required_fields.items():
-        if not re.search(pattern, content):
-            print(f"  ❌ Missing or invalid field: {field}")
-            all_found = False
-
-    if all_found:
-        print("  ✅ All required fields present")
-    return all_found
+    with pyproject_file.open("rb") as project_file:
+        declaration = tomllib.load(project_file)
+    project = declaration.get("project", {})
+    name = project.get("name")
+    if not isinstance(name, str):
+        print("  ❌ Missing or invalid project.name")
+        return False
+    try:
+        canonicalize_name(name, validate=True)
+    except InvalidName:
+        print("  ❌ Invalid project.name")
+        return False
+    for field in ("version", "description", "authors"):
+        if not project.get(field):
+            print(f"  ❌ Missing or invalid project.{field}")
+            return False
+    if not declaration.get("build-system", {}).get("build-backend"):
+        print("  ❌ Missing build-system.build-backend")
+        return False
+    print(f"  ✅ Declared project metadata present: {name}")
+    return True
 
 
 def check_readme():
