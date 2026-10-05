@@ -2,9 +2,54 @@
 
 from __future__ import annotations
 
+import sys
 import types
 from enum import Enum
-from typing import Annotated, Union, get_args, get_origin
+from typing import Annotated, Literal, Union, get_args, get_origin, get_type_hints
+
+
+def resolved_class_annotations(owner: type) -> dict[str, object]:
+    """Resolve nested type strings in the class that declared each field.
+
+    Python 3.10 leaves strings inside PEP 585 aliases unresolved. Complete
+    those declarations without interpreting Literal values or Annotated metadata.
+    """
+    annotations = get_type_hints(owner, include_extras=True)
+    unresolved = set(annotations)
+    for declaration in owner.__mro__:
+        class_namespace = dict(vars(declaration))
+        module = sys.modules.get(declaration.__module__)
+        module_namespace = {} if module is None else vars(module)
+        for name in class_namespace.get("__annotations__", {}):
+            if name in unresolved:
+                annotations[name] = _resolve_nested_type_strings(
+                    annotations[name], class_namespace, module_namespace
+                )
+                unresolved.remove(name)
+    return annotations
+
+
+def _resolve_nested_type_strings(annotation: object, globalns: dict, localns: dict) -> object:
+    if isinstance(annotation, str):
+        return _resolve_nested_type_strings(eval(annotation, globalns, localns), globalns, localns)
+    if isinstance(annotation, list):
+        resolved = [_resolve_nested_type_strings(member, globalns, localns) for member in annotation]
+        return annotation if all(a is b for a, b in zip(resolved, annotation)) else resolved
+    origin = get_origin(annotation)
+    members = get_args(annotation)
+    if not members or origin is Literal:
+        return annotation
+    if origin is Annotated:
+        base = _resolve_nested_type_strings(members[0], globalns, localns)
+        return annotation if base is members[0] else Annotated[(base, *members[1:])]
+    resolved = tuple(_resolve_nested_type_strings(member, globalns, localns) for member in members)
+    if all(member is original for member, original in zip(resolved, members)):
+        return annotation
+    if isinstance(annotation, types.GenericAlias):
+        return types.GenericAlias(origin, resolved)
+    if is_union_type(annotation):
+        return Union[resolved]  # noqa: UP007 - dynamically derived member tuple
+    return origin[resolved]
 
 
 def is_union_type(annotation: object) -> bool:

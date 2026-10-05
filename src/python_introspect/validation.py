@@ -14,12 +14,11 @@ from typing import (
     TypeVar,
     get_args,
     get_origin,
-    get_type_hints,
 )
 
 from annotated_types import Ge, Gt, Interval, Le, Len, Lt, MaxLen, MinLen, Predicate
 
-from .annotation_types import is_union_type
+from .annotation_types import is_union_type, resolved_class_annotations
 
 
 class AnnotationValidationError(ValueError):
@@ -86,7 +85,7 @@ def validate_annotated_dataclass(instance: object) -> None:
             f"got {owner_type.__name__}."
         )
 
-    annotations = get_type_hints(owner_type, include_extras=True)
+    annotations = resolved_class_annotations(owner_type)
     for declared_field in fields(instance):
         annotation = annotations.get(declared_field.name, declared_field.type)
         value = object.__getattribute__(instance, declared_field.name)
