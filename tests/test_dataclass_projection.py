@@ -1,10 +1,15 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+from typing import Annotated, Literal
 from collections.abc import Sequence
 
 import pytest
 
-from python_introspect import dataclass_from_mapping, project_dataclass
+from python_introspect import (
+    dataclass_from_mapping,
+    project_dataclass,
+    validate_annotated_dataclass,
+)
 
 
 class Mode(Enum):
@@ -254,3 +259,41 @@ def test_dataclass_mapping_rejects_ambiguous_structured_unions() -> None:
 
     with pytest.raises(TypeError, match="ambiguously matches multiple members"):
         dataclass_from_mapping(Envelope, {"payload": {"value": 1}})
+
+
+@dataclass(frozen=True)
+class AnnotatedSequenceEnvelope:
+    nodes: Annotated[Sequence["RecursiveSequenceNode"], "display text"]
+    state: Literal["unresolved_name"] = "unresolved_name"
+
+
+def test_nested_resolution_preserves_annotation_metadata_and_literal_values():
+    result = dataclass_from_mapping(
+        AnnotatedSequenceEnvelope, {"nodes": [{"name": "child"}]}
+    )
+    assert result == AnnotatedSequenceEnvelope((RecursiveSequenceNode("child"),))
+    with pytest.raises(TypeError, match=r"children\[0\]"):
+        validate_annotated_dataclass(RecursiveSequenceNode("parent", ({"name": "child"},)))
+
+
+def test_inherited_nested_types_use_the_declaring_module_namespace(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    base_module = ModuleType("sequence_base_declaration")
+    child_module = ModuleType("sequence_child_declaration")
+    monkeypatch.setitem(sys.modules, base_module.__name__, base_module)
+    monkeypatch.setitem(sys.modules, child_module.__name__, child_module)
+    exec(
+        'from dataclasses import dataclass\nfrom collections.abc import Sequence\n'
+        '@dataclass\nclass Leaf:\n    name: str\n'
+        '@dataclass\nclass Base:\n    children: Sequence["Leaf"]\n',
+        vars(base_module),
+    )
+    exec(
+        'from sequence_base_declaration import Base\n'
+        'Leaf = int\nclass Child(Base):\n    pass\n',
+        vars(child_module),
+    )
+    result = dataclass_from_mapping(child_module.Child, {"children": [{"name": "child"}]})
+    assert isinstance(result.children[0], base_module.Leaf)

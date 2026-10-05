@@ -13,10 +13,9 @@ from typing import (
     TypeVar,
     get_args,
     get_origin,
-    get_type_hints,
 )
 
-from .annotation_types import is_union_type
+from .annotation_types import is_union_type, resolved_class_annotations
 from .validation import validate_annotated_dataclass, validate_annotation_value
 
 DataclassT = TypeVar("DataclassT")
@@ -53,7 +52,7 @@ def dataclass_from_mapping(
             f"{target_type.__name__} received undeclared field(s): {', '.join(extras)}."
         )
 
-    annotations = get_type_hints(target_type, include_extras=True)
+    annotations = resolved_class_annotations(target_type)
     decoded_values: dict[str, object] = {}
     missing: list[str] = []
     for declared_field in declared_fields:
