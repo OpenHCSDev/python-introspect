@@ -240,3 +240,52 @@ def test_preparation_derives_raw_schema_closure_without_resolving_forward_refs(m
     assert calls == []
     assert Parent.__annotations__["child"] == "Child"
     assert Parent not in SignatureAnalyzer._dataclass_analysis_cache
+
+
+def test_help_failure_does_not_discard_admitted_values_or_repeat_factories(monkeypatch):
+    from python_introspect import DocstringExtractor
+
+    calls = []
+
+    def default():
+        calls.append("factory")
+        return [3]
+
+    @dataclasses.dataclass
+    class Declaration:
+        value: list = dataclasses.field(default_factory=default)
+
+    def help_failure(target):
+        calls.append("help")
+        raise RuntimeError("presentation unavailable")
+
+    monkeypatch.setattr(DocstringExtractor, "extract", help_failure)
+    parameters = SignatureAnalyzer.analyze(Declaration)
+    assert calls == ["factory"]
+    assert parameters["value"].default_value == [3]
+    assert SignatureAnalyzer.analyze(Declaration) is parameters
+    overlay = parameters["value"]._replace(default_value=[4])
+    assert overlay.default_value == [4]
+    assert calls == ["factory"]
+    assert overlay.description is None
+    assert parameters["value"].description is None
+    assert calls == ["factory", "help"]
+    assert parameters["value"]._replace(default_value=[4]).default_value == [4]
+    assert calls == ["factory", "help"]
+
+
+def test_retained_parameter_help_survives_analysis_cache_clear(monkeypatch):
+    from python_introspect import DocstringExtractor
+
+    @dataclasses.dataclass
+    class Declaration:
+        value: int = dataclasses.field(default=3, metadata={"description": "field help"})
+
+    info = SignatureAnalyzer.analyze(Declaration)["value"]
+    monkeypatch.delitem(SignatureAnalyzer._dataclass_analysis_cache, Declaration)
+    replacement = info._replace(name="renamed")
+    assert replacement.description == "field help"
+    assert info == replacement._replace(name="value")
+    assert hash(info) == hash(replacement._replace(name="value"))
+    assert info.description == "field help"
+    assert Declaration not in SignatureAnalyzer._dataclass_analysis_cache

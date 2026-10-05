@@ -146,13 +146,71 @@ class AnalysisConstants:
 CONSTANTS = AnalysisConstants()
 
 
-class ParameterInfo(NamedTuple):
-    """Information about a parameter."""
+@dataclass(frozen=True, init=False, eq=False)
+class ParameterInfo:
+    """Admitted parameter values with presentation derived from their declaration.
+
+    Callable descriptions remain concrete because they can determine inferred
+    types. Dataclass descriptions are requested independently of value admission.
+    """
+
     name: str
     param_type: type
     default_value: Any
     is_required: bool
-    description: Optional[str] = None  # Add parameter description from docstring
+    _description: Optional[str]
+    _description_owner: Optional[type]
+
+    def __init__(
+        self, name: str, param_type: type, default_value: Any, is_required: bool,
+        description: Optional[str] = None, *, description_owner: Optional[type] = None,
+    ):
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "param_type", param_type)
+        object.__setattr__(self, "default_value", default_value)
+        object.__setattr__(self, "is_required", is_required)
+        object.__setattr__(self, "_description", description)
+        object.__setattr__(self, "_description_owner", description_owner)
+
+    @property
+    def description(self) -> Optional[str]:
+        if self._description_owner is not None:
+            SignatureAnalyzer._materialize_dataclass_descriptions(self._description_owner, self)
+        return self._description
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ParameterInfo):
+            return NotImplemented
+        return (
+            self.name, self.param_type, self.default_value, self.is_required, self.description,
+        ) == (
+            other.name, other.param_type, other.default_value, other.is_required, other.description,
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.name, self.param_type, self.default_value, self.is_required, self.description))
+
+    def _replace(self, **changes: Any) -> "ParameterInfo":
+        """Replace declared fields through the same public parameter owner."""
+        values = dict(
+            name=self.name, param_type=self.param_type,
+            default_value=self.default_value, is_required=self.is_required,
+            description=self._description,
+        )
+        unknown = changes.keys() - values.keys()
+        if unknown:
+            raise ValueError(f"Got unexpected field names: {sorted(unknown)!r}")
+        owner = self._description_owner
+        if "description" in changes:
+            owner = None
+        elif "name" in changes and changes["name"] != self.name:
+            # A renamed field keeps the original declaration's help, rather
+            # than querying a different field in the same source class.
+            values["description"] = self.description
+            owner = None
+        values.update(changes)
+        return type(self)(**values, description_owner=owner)
+
 
 class DocstringInfo(NamedTuple):
     """Information extracted from a docstring."""
@@ -971,16 +1029,6 @@ class SignatureAnalyzer:
             except Exception:
                 type_hints = inspect.get_annotations(dataclass_type, eval_str=False)
 
-            # Extract docstring information from dataclass
-            docstring_info = DocstringExtractor.extract(dataclass_type)
-
-            # Extract inline field documentation using AST
-            inline_docs = SignatureAnalyzer._extract_inline_field_docs(dataclass_type)
-
-            # ENHANCEMENT: For dataclasses modified by decorators,
-            # also extract field documentation from the field types themselves
-            field_type_docs = SignatureAnalyzer._extract_field_type_docs(dataclass_type)
-
             parameters = {}
 
             for field in dataclasses.fields(dataclass_type):
@@ -1001,31 +1049,12 @@ class SignatureAnalyzer:
                     default_value = None
                     is_required = True
 
-                # Get field description from multiple sources (priority order)
-                field_description = None
-
-                # 1. Field metadata (highest priority)
-                if 'description' in field.metadata:
-                    field_description = field.metadata['description']
-                # 2. Inline documentation strings (from AST parsing)
-                elif field.name in inline_docs:
-                    field_description = inline_docs[field.name]
-                # 3. Field type documentation (for decorator-modified classes)
-                elif field.name in field_type_docs:
-                    field_description = field_type_docs[field.name]
-                # 4. Docstring parameters (fallback)
-                elif docstring_info.parameters and field.name in docstring_info.parameters:
-                    field_description = docstring_info.parameters.get(field.name)
-                # 5. CRITICAL FIX: Use inheritance-aware field documentation extraction
-                else:
-                    field_description = SignatureAnalyzer.extract_field_documentation(dataclass_type, field.name)
-
                 parameters[field.name] = ParameterInfo(
                     name=field.name,
                     param_type=param_type,
                     default_value=default_value,
                     is_required=is_required,
-                    description=field_description
+                    description_owner=dataclass_type,
                 )
 
             # PERFORMANCE: Cache the result to avoid re-parsing
@@ -1035,6 +1064,49 @@ class SignatureAnalyzer:
         except Exception:
             # Return empty dict on error (don't cache errors)
             return {}
+
+    @staticmethod
+    def _materialize_dataclass_descriptions(dataclass_type: type, requested: ParameterInfo) -> None:
+        """Fill presentation on the existing admitted declarations, once requested.
+
+        Presentation extraction errors no longer discard usable value/type
+        declarations. They yield absent help, matching the existing help fallback.
+        """
+        parameters = SignatureAnalyzer._dataclass_analysis_cache.get(dataclass_type, {})
+        admitted = parameters.get(requested.name)
+        if admitted is not None and admitted is not requested:
+            object.__setattr__(requested, "_description", admitted.description)
+            object.__setattr__(requested, "_description_owner", None)
+            return
+        if admitted is not requested:
+            parameters = {requested.name: requested}
+        pending = [info for info in parameters.values() if info._description_owner is not None]
+        if not pending:
+            return
+        try:
+            docstring_info = DocstringExtractor.extract(dataclass_type)
+            inline_docs = SignatureAnalyzer._extract_inline_field_docs(dataclass_type)
+            field_type_docs = SignatureAnalyzer._extract_field_type_docs(dataclass_type)
+            descriptions = {}
+            for field in dataclasses.fields(dataclass_type):
+                if field.name not in parameters:
+                    continue
+                if 'description' in field.metadata:
+                    description = field.metadata['description']
+                elif field.name in inline_docs:
+                    description = inline_docs[field.name]
+                elif field.name in field_type_docs:
+                    description = field_type_docs[field.name]
+                elif field.name in docstring_info.parameters_dict:
+                    description = docstring_info.parameters_dict[field.name]
+                else:
+                    description = SignatureAnalyzer.extract_field_documentation(dataclass_type, field.name)
+                descriptions[field.name] = description
+        except Exception:
+            descriptions = {}
+        for info in pending:
+            object.__setattr__(info, "_description", descriptions.get(info.name))
+            object.__setattr__(info, "_description_owner", None)
 
     @staticmethod
     def prepare_dataclass_declarations(declarations: Iterable[type]) -> None:

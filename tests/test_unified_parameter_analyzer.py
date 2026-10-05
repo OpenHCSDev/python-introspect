@@ -6,7 +6,8 @@ from typing import Optional, List, Dict, Any
 from python_introspect import (
     add_parameter_exclusions,
     UnifiedParameterAnalyzer,
-    UnifiedParameterInfo,
+    ParameterInfo,
+    SignatureAnalyzer,
     set_parameter_exclusions,
 )
 
@@ -30,11 +31,10 @@ class TestUnifiedParameterAnalyzer:
 
         assert "name" in params
         assert "age" in params
-        assert isinstance(params["name"], UnifiedParameterInfo)
+        assert isinstance(params["name"], ParameterInfo)
         assert params["name"].param_type == str
         assert params["name"].is_required is True
         assert params["age"].default_value == 25
-        assert params["age"].source_type == "function"
 
     def test_analyze_dataclass_type(self):
         """Test analyzing a dataclass type."""
@@ -54,8 +54,8 @@ class TestUnifiedParameterAnalyzer:
 
         assert "name" in params
         assert "value" in params
-        assert params["name"].source_type == "dataclass"
         assert params["value"].default_value == 10
+        assert params["value"] is SignatureAnalyzer.analyze(Config)["value"]
 
     def test_analyze_dataclass_instance(self):
         """Test analyzing a dataclass instance."""
@@ -70,7 +70,6 @@ class TestUnifiedParameterAnalyzer:
 
         assert params["name"].default_value == "default"
         assert params["value"].default_value == 10
-        assert params["name"].source_type == "dataclass_instance"
 
     def test_analyze_with_exclusions(self):
         """Test analyzing with parameter exclusions."""
@@ -176,24 +175,6 @@ class TestUnifiedParameterAnalyzer:
         assert "image" not in params
         assert "runtime_context" not in params
 
-    def test_analyze_nested(self):
-        """Test nested analysis for dataclass fields."""
-        @dataclass
-        class Inner:
-            value: int = 5
-
-        @dataclass
-        class Outer:
-            name: str
-            inner: Inner = field(default_factory=Inner)
-
-        analyzer = UnifiedParameterAnalyzer()
-        params = analyzer.analyze_nested(Outer)
-
-        assert "name" in params
-        assert "inner" in params
-        assert "nested" in params["inner"].source_type
-
     def test_analyze_method(self):
         """Test analyzing instance methods."""
         class MyClass:
@@ -247,52 +228,6 @@ class TestUnifiedParameterAnalyzer:
         assert "items" in params
         assert "mapping" in params
         assert "optional" in params
-
-
-class TestUnifiedParameterInfo:
-    """Test UnifiedParameterInfo dataclass."""
-
-    def test_create_unified_parameter_info(self):
-        """Test creating UnifiedParameterInfo."""
-        info = UnifiedParameterInfo(
-            name="test",
-            param_type=str,
-            default_value="default",
-            is_required=False,
-            description="Test param",
-            source_type="function"
-        )
-
-        assert info.name == "test"
-        assert info.param_type == str
-        assert info.default_value == "default"
-        assert info.is_required is False
-        assert info.description == "Test param"
-        assert info.source_type == "function"
-
-    def test_from_parameter_info(self):
-        """Test converting from ParameterInfo."""
-        from python_introspect import ParameterInfo
-
-        param_info = ParameterInfo(
-            name="test",
-            param_type=int,
-            default_value=10,
-            is_required=True,
-            description="Test"
-        )
-
-        unified = UnifiedParameterInfo.from_parameter_info(
-            param_info,
-            source_type="test"
-        )
-
-        assert unified.name == "test"
-        assert unified.param_type == int
-        assert unified.default_value == 10
-        assert unified.is_required is True
-        assert unified.description == "Test"
-        assert unified.source_type == "test"
 
 
 class TestObjectInstanceAnalysis:

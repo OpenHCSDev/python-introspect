@@ -9,7 +9,7 @@ Extensibility:
     type resolution for framework-specific types (lazy configs, proxies, etc.)
 """
 
-__version__ = "0.1.16"
+__version__ = "0.2.0"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
@@ -24,7 +24,6 @@ from .signature_analyzer import (
 )
 from .unified_parameter_analyzer import (
     UnifiedParameterAnalyzer,
-    UnifiedParameterInfo,
     add_parameter_exclusions,
     set_parameter_exclusions,
     parameter_exclusions,
@@ -89,7 +88,6 @@ __all__ = [
     "signature_analysis_target",
     # Unified analysis
     "UnifiedParameterAnalyzer",
-    "UnifiedParameterInfo",
     "add_parameter_exclusions",
     "set_parameter_exclusions",
     "parameter_exclusions",

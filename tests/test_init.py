@@ -49,13 +49,6 @@ class TestPackageImports:
 
         assert UnifiedParameterAnalyzer is not None
 
-    def test_unified_parameter_info_import(self):
-        """Test UnifiedParameterInfo is importable."""
-        assert hasattr(python_introspect, "UnifiedParameterInfo")
-        from python_introspect import UnifiedParameterInfo
-
-        assert UnifiedParameterInfo is not None
-
     def test_exceptions_import(self):
         """Test all exception classes are importable."""
         from python_introspect import (
@@ -85,7 +78,6 @@ class TestPublicAPI:
             "set_signature_analysis_target",
             "signature_analysis_target",
             "UnifiedParameterAnalyzer",
-            "UnifiedParameterInfo",
             "set_parameter_exclusions",
             "parameter_exclusions",
             "IntrospectionError",
