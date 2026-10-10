@@ -9,7 +9,7 @@ Extensibility:
     type resolution for framework-specific types (lazy configs, proxies, etc.)
 """
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
@@ -49,6 +49,19 @@ from .validation import (
 from .dataclass_projection import (
     dataclass_from_mapping,
     project_dataclass,
+)
+from .jsonable import (
+    JsonObject,
+    JsonScalar,
+    JsonValue,
+    to_jsonable,
+)
+from .public_api import (
+    declared_public_names,
+    exported_public_names,
+    is_declared_public_name,
+    lazy_exports,
+    public_names_from_objects,
 )
 from .environment_projection import (
     EnvironmentVariable,
@@ -109,6 +122,17 @@ __all__ = [
     # Dataclass projection
     "dataclass_from_mapping",
     "project_dataclass",
+    # JSON-native projection
+    "JsonObject",
+    "JsonScalar",
+    "JsonValue",
+    "to_jsonable",
+    # Module public surfaces
+    "declared_public_names",
+    "exported_public_names",
+    "is_declared_public_name",
+    "lazy_exports",
+    "public_names_from_objects",
     # Environment projection
     "EnvironmentVariable",
     "overlay_dataclass_from_environment",
