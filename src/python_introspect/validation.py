@@ -19,6 +19,7 @@ from typing import (
 from annotated_types import Ge, Gt, Interval, Le, Len, Lt, MaxLen, MinLen, Predicate
 
 from .annotation_types import is_union_type, resolved_class_annotations
+from .choices import AnnotationChoices
 
 
 class AnnotationValidationError(ValueError):
@@ -146,6 +147,9 @@ def validate_annotation_value(
     if origin in {dict, Mapping}:
         _validate_mapping(annotation, value, path)
         return
+    if origin is type:
+        _validate_class_value(annotation, value, path)
+        return
     if origin is Callable:
         if not callable(value):
             raise TypeError(f"{path} must be callable; got {type(value).__name__}.")
@@ -205,6 +209,21 @@ def _validate_sequence(annotation: object, value: object, path: str) -> None:
             validate_annotation_value(members[0], item, path=f"{path}[{index}]")
 
 
+def _validate_class_value(annotation: object, value: object, path: str) -> None:
+    if not isinstance(value, type):
+        raise TypeError(f"{path} must be a class; got {type(value).__name__}.")
+    members = get_args(annotation)
+    if not members or members[0] is Any:
+        return
+    bounds = get_args(members[0]) if is_union_type(members[0]) else (members[0],)
+    if not any(isinstance(bound, type) and issubclass(value, bound) for bound in bounds):
+        raise TypeError(
+            f"{path} must be a subclass of "
+            f"{' | '.join(_annotation_label(bound) for bound in bounds)}; "
+            f"got {value.__qualname__}."
+        )
+
+
 def _validate_mapping(annotation: object, value: object, path: str) -> None:
     if not isinstance(value, Mapping):
         raise TypeError(f"{path} must be a mapping; got {type(value).__name__}.")
@@ -224,6 +243,20 @@ def _annotation_label(annotation: object) -> str:
 @singledispatch
 def _validate_constraint(metadata: object, value: object, path: str) -> None:
     """Ignore annotation metadata that does not declare a runtime constraint."""
+
+
+@_validate_constraint.register
+def _(metadata: AnnotationChoices, value: object, path: str) -> None:
+    if value is None:
+        return
+    choices = metadata.choices()
+    items = value if isinstance(value, (list, tuple, frozenset, set)) else (value,)
+    for item in items:
+        if item not in choices:
+            raise AnnotationValidationError(
+                f"{path} must hold values from "
+                f"{[metadata.label(choice) for choice in choices]}; got {item!r}."
+            )
 
 
 @_validate_constraint.register

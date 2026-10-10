@@ -143,9 +143,16 @@ def enum_input_values(annotation: object) -> tuple[str, ...]:
 
     String-valued members expose their value.  Members whose values are not
     strings expose their name, which keeps JSON and command-line projections
-    unambiguous, including enums whose concrete value is ``None``.
+    unambiguous, including enums whose concrete value is ``None``.  A field
+    declaring :class:`~python_introspect.choices.AnnotationChoices` exposes its
+    choice labels.
     """
 
+    from .choices import declared_annotation_choices
+
+    choices = declared_annotation_choices(annotation)
+    if choices is not None:
+        return tuple(choices.label(choice) for choice in choices.choices())
     enum_type = declared_enum_type(annotation)
     if enum_type is None:
         return ()

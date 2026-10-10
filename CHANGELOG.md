@@ -2,6 +2,12 @@
 
 0.2.2 is the first 0.2.x release published to PyPI. The 0.2.0 and 0.2.1 tags exist in git, but their publish runs were cancelled, so upgrading from PyPI goes straight from 0.1.16 to 0.2.2. The notes below cover every change in that jump.
 
+## 0.2.3
+
+Added:
+- `AnnotationChoices`: `Annotated` metadata declaring the finite values a field may hold. Annotation validation checks each value (or each item of a sequence value) against the declared choices, and `declared_annotation_choices` finds the declaration through `Annotated`, `Optional` and homogeneous containers for form builders; `enum_input_values` returns choice labels.
+- `type[X]` annotations are validated: the value must be a class and a subclass of `X`.
+
 ## 0.2.2
 
 Added:
