@@ -2,6 +2,11 @@
 
 0.2.2 is the first 0.2.x release published to PyPI. The 0.2.0 and 0.2.1 tags exist in git, but their publish runs were cancelled, so upgrading from PyPI goes straight from 0.1.16 to 0.2.2. The notes below cover every change in that jump.
 
+## 0.2.4
+
+Fixed:
+- `dataclass_from_mapping` and `validate_annotated_dataclass` no longer raise `RecursionError` on Python 3.10 for fields declared with a recursive type alias such as `V = str | list["V"] | dict[str, "V"]`. Since 0.2.1, nested type strings were expanded on 3.10 with no stop, so a self-reference expanded forever. Expansion now stops at a self-reference and leaves it as a `ForwardRef`, which is what `get_type_hints` returns on Python 3.11 and later, so the decoder sees the same declaration on every version.
+
 ## 0.2.3
 
 Added:

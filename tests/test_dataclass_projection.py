@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Annotated, Literal
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import pytest
 
@@ -297,3 +297,37 @@ def test_inherited_nested_types_use_the_declaring_module_namespace(monkeypatch):
     )
     result = dataclass_from_mapping(child_module.Child, {"children": [{"name": "child"}]})
     assert isinstance(result.children[0], base_module.Leaf)
+
+
+WireValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | list["WireValue"]
+    | tuple["WireValue", ...]
+    | dict[str, "WireValue"]
+)
+
+
+@dataclass(frozen=True)
+class WireEnvelope:
+    sequence: int
+    event: Mapping[str, WireValue] | None
+
+
+def test_recursive_type_alias_decodes_nested_values() -> None:
+    # Python 3.10 keeps "WireValue" as a string inside the PEP 585 aliases;
+    # resolving it must stop where the alias names itself.
+    payload = {
+        "sequence": 1,
+        "event": {
+            "phase": "compile",
+            "percent": 50.0,
+            "context": {"axes": ["A01"], "details": [{"ready": True, "error": None}]},
+        },
+    }
+    result = dataclass_from_mapping(WireEnvelope, payload)
+    assert result == WireEnvelope(1, payload["event"])
+    validate_annotated_dataclass(result)
