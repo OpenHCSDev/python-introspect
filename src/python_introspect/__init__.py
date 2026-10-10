@@ -39,6 +39,7 @@ from .enableable import (
     is_enableable,
     mark_enableable,
 )
+from .choices import AnnotationChoices, declared_annotation_choices
 from .validation import (
     AnnotatedDataclassValidationMixin,
     AnnotationValidationError,
@@ -119,6 +120,8 @@ __all__ = [
     "overlay_non_none_dataclass",
     "validate_annotated_dataclass",
     "validate_annotation_value",
+    "AnnotationChoices",
+    "declared_annotation_choices",
     # Dataclass projection
     "dataclass_from_mapping",
     "project_dataclass",
