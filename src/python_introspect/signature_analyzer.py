@@ -771,6 +771,26 @@ class CallableAnalysisContext:
         )
 
 
+def _class_node_for_qualname(tree: ast.AST, qualname: str) -> Optional[ast.ClassDef]:
+    """Return the class statement whose qualified name is ``qualname``.
+
+    Function bodies contribute ``<locals>`` exactly as ``__qualname__`` does.
+    """
+    pending = [(node, ()) for node in reversed(getattr(tree, 'body', ()))]
+    while pending:
+        node, scope = pending.pop()
+        if isinstance(node, ast.ClassDef):
+            node_scope = (*scope, node.name)
+            if '.'.join(node_scope) == qualname:
+                return node
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            node_scope = (*scope, node.name, '<locals>')
+        else:
+            node_scope = scope
+        pending.extend((child, node_scope) for child in reversed(list(ast.iter_child_nodes(node))))
+    return None
+
+
 class ClassSourceDeclaration(NamedTuple):
     """Immutable located class source and its source-only documentation views."""
 
@@ -1196,20 +1216,13 @@ class SignatureAnalyzer:
     def _qualified_class_source(source: str, qualname: str) -> Optional[ClassSourceDeclaration]:
         """Use Python's qualified class/decorator locator on current source content."""
         tree = SignatureAnalyzer._module_source_tree(source)
-        finder = inspect._ClassFinder(qualname)
-        try:
-            finder.visit(tree)
-        except inspect.ClassFoundException as found:
-            lines = source.splitlines(keepends=True)
-            first_line = found.args[0] + 1
-            block = ''.join(inspect.getblock(lines[found.args[0]:]))
-            class_node = next(
-                node for node in ast.walk(tree)
-                if isinstance(node, ast.ClassDef)
-                and min([node.lineno, *(decorator.lineno for decorator in node.decorator_list)]) == first_line
-            )
-            return ClassSourceDeclaration.from_block(block, class_node, first_line)
-        return None
+        class_node = _class_node_for_qualname(tree, qualname)
+        if class_node is None:
+            return None
+        first_line = min([class_node.lineno, *(decorator.lineno for decorator in class_node.decorator_list)])
+        lines = source.splitlines(keepends=True)
+        block = ''.join(inspect.getblock(lines[first_line - 1:]))
+        return ClassSourceDeclaration.from_block(block, class_node, first_line)
 
     @staticmethod
     def _extract_inline_field_docs(dataclass_type: type) -> Dict[str, str]:

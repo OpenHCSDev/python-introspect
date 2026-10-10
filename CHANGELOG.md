@@ -2,6 +2,11 @@
 
 0.2.2 is the first 0.2.x release published to PyPI. The 0.2.0 and 0.2.1 tags exist in git, but their publish runs were cancelled, so upgrading from PyPI goes straight from 0.1.16 to 0.2.2. The notes below cover every change in that jump.
 
+## 0.2.5
+
+Fixed:
+- Inline field documentation (a string literal under a dataclass field) is extracted again on Python 3.13 and later. Class source lookup used `inspect._ClassFinder`, a private helper that Python 3.13 removed, so every dataclass came back with no field help. Classes are now located by qualified name from the module AST directly. CI now tests Python 3.13.
+
 ## 0.2.4
 
 Fixed:
