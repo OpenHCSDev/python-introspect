@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import pytest
 from metaclass_registry import AutoRegisterMeta
@@ -60,7 +60,7 @@ def test_dataclass_round_trips_through_declared_fields():
 
     assert encoded == {
         "endpoint": {"host": "localhost", "port": 7777, "mode": "tcp"},
-        "path": "/plates/a",
+        "path": str(PurePath("/plates/a")),
         "tags": ["x", "y"],
         "weights": {"a": 0.5},
         "payload": {"nested": [1, {"deep": None}], "flag": True, "ratio": 1.5},
@@ -80,7 +80,7 @@ def test_dataclass_round_trips_through_declared_fields():
         (2.5, 2.5),
         (True, True),
         (Mode.IPC, "ipc"),
-        (Path("a/b"), "a/b"),
+        (Path("a/b"), str(PurePath("a/b"))),
         ((1, 2), [1, 2]),
         (frozenset({1}), [1]),
         ({Mode.TCP: (1,)}, {"tcp": [1]}),
