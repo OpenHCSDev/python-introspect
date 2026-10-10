@@ -9,7 +9,7 @@ Extensibility:
     type resolution for framework-specific types (lazy configs, proxies, etc.)
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
