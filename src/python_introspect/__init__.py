@@ -9,7 +9,7 @@ Extensibility:
     type resolution for framework-specific types (lazy configs, proxies, etc.)
 """
 
-__version__ = "0.2.6"
+__version__ = "0.2.7"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
@@ -56,6 +56,8 @@ from .jsonable import (
     JsonObject,
     JsonScalar,
     JsonValue,
+    RegisteredClassChoices,
+    registered_class_from_key,
     to_jsonable,
 )
 from .public_api import (
@@ -122,6 +124,7 @@ __all__ = [
     "validate_annotated_dataclass",
     "validate_annotation_value",
     "AnnotationChoices",
+    "RegisteredClassChoices",
     "declared_annotation_choices",
     "FieldLabel",
     "declared_field_label",
@@ -132,6 +135,7 @@ __all__ = [
     "JsonObject",
     "JsonScalar",
     "JsonValue",
+    "registered_class_from_key",
     "to_jsonable",
     # Module public surfaces
     "declared_public_names",

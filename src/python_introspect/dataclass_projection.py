@@ -15,7 +15,10 @@ from typing import (
     get_origin,
 )
 
+from metaclass_registry import AutoRegisterMeta
+
 from .annotation_types import is_union_type, resolved_class_annotations
+from .jsonable import registered_class_from_key
 from .validation import validate_annotated_dataclass, validate_annotation_value
 
 DataclassT = TypeVar("DataclassT")
@@ -262,6 +265,16 @@ def _mapping_value_for_annotation(
             )
             for key, item in value.items()
         }
+    if origin is type:
+        bounds = get_args(annotation)
+        if (
+            not isinstance(value, type)
+            and len(bounds) == 1
+            and isinstance(bounds[0], AutoRegisterMeta)
+        ):
+            value = registered_class_from_key(bounds[0], value)
+        validate_annotation_value(annotation, value, path=path)
+        return value
     if annotation is type(None):
         if value is not None:
             raise TypeError(f"{path} must be null.")
