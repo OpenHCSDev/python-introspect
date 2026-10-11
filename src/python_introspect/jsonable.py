@@ -4,13 +4,19 @@
 dataclass projects through its declared fields, and the decoder rebuilds it
 from the same declarations. Further value types join through
 ``to_jsonable.register``.
+
+A class registered in an ``AutoRegisterMeta`` family travels as its registry
+key; ``registered_class_from_key`` is the inverse the decoder uses for fields
+annotated ``type[Family]``. A family whose boundary spelling is not its
+registry (for example one resolved through an active subset) registers its own
+decoder on its metaclass.
 """
 
 from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from functools import singledispatch
 from pathlib import Path
@@ -18,6 +24,7 @@ from typing import ForwardRef, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 
+from .choices import AnnotationChoices
 from .signature_analyzer import signature_analysis_target
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -99,6 +106,57 @@ def _jsonable_registered_type(value: AutoRegisterMeta) -> JsonValue:
     if key is None:
         raise TypeError(f"Registered type {value.__qualname__} has no registry key.")
     return to_jsonable(key)
+
+
+@singledispatch
+def registered_class_from_key(family: type, key: JsonValue) -> type:
+    """Return the member of ``family`` that ``to_jsonable`` spells as ``key``.
+
+    Dispatches on the family's metaclass, mirroring how ``to_jsonable``
+    dispatches a registered class on its metaclass.
+    """
+
+    raise TypeError(
+        f"{family.__qualname__} is not a registered family; "
+        f"cannot decode {key!r} into one of its classes."
+    )
+
+
+@registered_class_from_key.register(AutoRegisterMeta)
+def _registered_class_from_registry(family: AutoRegisterMeta, key: JsonValue) -> type:
+    keys_by_member = {
+        member: to_jsonable(registered_key)
+        for registered_key, member in family.__registry__.items()
+        if issubclass(member, family)
+    }
+    matches = [member for member, member_key in keys_by_member.items() if member_key == key]
+    if len(matches) != 1:
+        raise ValueError(
+            f"{key!r} is not a registered {family.__qualname__}; "
+            f"registered: {sorted(map(str, keys_by_member.values()))}."
+        )
+    return matches[0]
+
+
+@dataclass(frozen=True)
+class RegisteredClassChoices(AnnotationChoices):
+    """A field holding one class of a registered family.
+
+    The choices are the family's registered members in registration order, each
+    labelled by its JSON spelling (its registry key).
+    """
+
+    family: AutoRegisterMeta
+
+    def choices(self) -> tuple[object, ...]:
+        return tuple(
+            member
+            for member in self.family.__registry__.values()
+            if issubclass(member, self.family)
+        )
+
+    def label(self, choice: object) -> str:
+        return str(to_jsonable(choice))
 
 
 @to_jsonable.register(Enum)

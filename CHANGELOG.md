@@ -2,6 +2,12 @@
 
 0.2.2 is the first 0.2.x release published to PyPI. The 0.2.0 and 0.2.1 tags exist in git, but their publish runs were cancelled, so upgrading from PyPI goes straight from 0.1.16 to 0.2.2. The notes below cover every change in that jump.
 
+## 0.2.7
+
+Added:
+- `dataclass_from_mapping` decodes a field annotated `type[Family]`, where `Family` is an `AutoRegisterMeta` family, from the registry key that `to_jsonable` writes for the class. A key outside the family fails loudly. Decoding goes through `registered_class_from_key`, which dispatches on the family's metaclass, so a family whose boundary spelling is not its registry key registers its own decoder.
+- `RegisteredClassChoices(family)`: the `AnnotationChoices` of a field holding one class of a registered family, labelled by registry key.
+
 ## 0.2.6
 
 Added:
