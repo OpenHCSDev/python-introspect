@@ -183,11 +183,29 @@ class RegisteredClassChoices(AnnotationChoices):
 
         return core_schema.no_info_plain_validator_function(
             member,
+            ref=f"{self.family.__module__}.{self.family.__qualname__}",
             json_schema_input_schema=core_schema.literal_schema(
                 [to_jsonable(choice) for choice in self.choices()]
             ),
             serialization=core_schema.plain_serializer_function_ser_schema(to_jsonable),
         )
+
+    def __get_pydantic_json_schema__(self, core_schema, handler):
+        """Publish the family as a named string enum of its registry keys."""
+
+        description = (self.family.__doc__ or "").strip().split("\n\n")[0]
+        schema = {
+            "enum": [to_jsonable(choice) for choice in self.choices()],
+            "title": self.family.__name__,
+            "type": "string",
+        }
+        if description:
+            schema["description"] = " ".join(description.split())
+        reference = handler(core_schema)
+        definition = handler.resolve_ref_schema(reference)
+        definition.clear()
+        definition.update(schema)
+        return reference
 
 
 @to_jsonable.register(Enum)

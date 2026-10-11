@@ -224,7 +224,7 @@ def test_registered_class_choices_validate_keys_in_pydantic():
     assert adapter.validate_python("square") is Square
     assert adapter.validate_python(Circle) is Circle
     assert adapter.dump_python(Square, mode="json") == "square"
-    assert adapter.json_schema() == {"enum": ["circle", "square"], "type": "string"}
+    assert adapter.json_schema() == {"enum": ["circle", "square"], "title": "Shape", "type": "string"}
     with pytest.raises(pydantic.ValidationError):
         adapter.validate_python("triangle")
     with pytest.raises(pydantic.ValidationError):
