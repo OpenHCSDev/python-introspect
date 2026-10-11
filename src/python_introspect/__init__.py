@@ -9,7 +9,7 @@ Extensibility:
     type resolution for framework-specific types (lazy configs, proxies, etc.)
 """
 
-__version__ = "0.2.5"
+__version__ = "0.2.6"
 
 from .signature_analyzer import (
     SignatureAnalyzer,
@@ -40,6 +40,7 @@ from .enableable import (
     mark_enableable,
 )
 from .choices import AnnotationChoices, declared_annotation_choices
+from .field_label import FieldLabel, declared_field_label
 from .validation import (
     AnnotatedDataclassValidationMixin,
     AnnotationValidationError,
@@ -122,6 +123,8 @@ __all__ = [
     "validate_annotation_value",
     "AnnotationChoices",
     "declared_annotation_choices",
+    "FieldLabel",
+    "declared_field_label",
     # Dataclass projection
     "dataclass_from_mapping",
     "project_dataclass",
