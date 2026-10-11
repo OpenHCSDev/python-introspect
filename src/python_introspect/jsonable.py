@@ -122,10 +122,21 @@ def registered_class_from_key(family: type, key: JsonValue) -> type:
     )
 
 
+def _json_key(registered_key: object) -> JsonValue:
+    """A registry key as ``to_jsonable`` spells it; scalar keys are their own spelling.
+
+    Decoding reads scalar keys directly so it never runs the encoder.
+    """
+
+    if isinstance(registered_key, (str, int, float, bool)):
+        return registered_key
+    return to_jsonable(registered_key)
+
+
 @registered_class_from_key.register(AutoRegisterMeta)
 def _registered_class_from_registry(family: AutoRegisterMeta, key: JsonValue) -> type:
     keys_by_member = {
-        member: to_jsonable(registered_key)
+        member: _json_key(registered_key)
         for registered_key, member in family.__registry__.items()
         if issubclass(member, family)
     }
@@ -157,6 +168,44 @@ class RegisteredClassChoices(AnnotationChoices):
 
     def label(self, choice: object) -> str:
         return str(to_jsonable(choice))
+
+    def __get_pydantic_core_schema__(self, source_type, handler):
+        """Let pydantic accept a member or its registry key and emit the key."""
+
+        from pydantic_core import core_schema
+
+        def member(value: object) -> type:
+            if isinstance(value, type):
+                if issubclass(value, self.family):
+                    return value
+                raise ValueError(f"{value!r} is not a {self.family.__qualname__}.")
+            return registered_class_from_key(self.family, value)
+
+        return core_schema.no_info_plain_validator_function(
+            member,
+            ref=f"{self.family.__module__}.{self.family.__qualname__}",
+            json_schema_input_schema=core_schema.literal_schema(
+                [to_jsonable(choice) for choice in self.choices()]
+            ),
+            serialization=core_schema.plain_serializer_function_ser_schema(to_jsonable),
+        )
+
+    def __get_pydantic_json_schema__(self, core_schema, handler):
+        """Publish the family as a named string enum of its registry keys."""
+
+        description = (self.family.__doc__ or "").strip().split("\n\n")[0]
+        schema = {
+            "enum": [to_jsonable(choice) for choice in self.choices()],
+            "title": self.family.__name__,
+            "type": "string",
+        }
+        if description:
+            schema["description"] = " ".join(description.split())
+        reference = handler(core_schema)
+        definition = handler.resolve_ref_schema(reference)
+        definition.clear()
+        definition.update(schema)
+        return reference
 
 
 @to_jsonable.register(Enum)

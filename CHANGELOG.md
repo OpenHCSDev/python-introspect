@@ -2,6 +2,11 @@
 
 0.2.2 is the first 0.2.x release published to PyPI. The 0.2.0 and 0.2.1 tags exist in git, but their publish runs were cancelled, so upgrading from PyPI goes straight from 0.1.16 to 0.2.2. The notes below cover every change in that jump.
 
+## 0.2.8
+
+Added:
+- `RegisteredClassChoices` validates in pydantic: a field annotated with it accepts a member class or its registry key, serializes to the key, and publishes the keys as a JSON-schema enum, so pydantic-built tool schemas (for example MCP) accept family-valued fields.
+
 ## 0.2.7
 
 Added:
