@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path, PurePath
+from typing import Annotated
 
 import pytest
 from metaclass_registry import AutoRegisterMeta
@@ -214,3 +215,17 @@ def test_registered_class_choices_list_members_by_their_key():
     assert [choices.label(choice) for choice in choices.choices()] == ["circle", "square"]
     assert choices.choice_for_label("square") is Square
     assert choices == RegisteredClassChoices(Shape)
+
+
+def test_registered_class_choices_validate_keys_in_pydantic():
+    pydantic = pytest.importorskip("pydantic")
+    adapter = pydantic.TypeAdapter(Annotated[type[Shape], RegisteredClassChoices(Shape)])
+
+    assert adapter.validate_python("square") is Square
+    assert adapter.validate_python(Circle) is Circle
+    assert adapter.dump_python(Square, mode="json") == "square"
+    assert adapter.json_schema() == {"enum": ["circle", "square"], "type": "string"}
+    with pytest.raises(pydantic.ValidationError):
+        adapter.validate_python("triangle")
+    with pytest.raises(pydantic.ValidationError):
+        adapter.validate_python(Triangle)

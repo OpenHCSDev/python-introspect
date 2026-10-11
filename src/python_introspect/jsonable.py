@@ -158,6 +158,26 @@ class RegisteredClassChoices(AnnotationChoices):
     def label(self, choice: object) -> str:
         return str(to_jsonable(choice))
 
+    def __get_pydantic_core_schema__(self, source_type, handler):
+        """Let pydantic accept a member or its registry key and emit the key."""
+
+        from pydantic_core import core_schema
+
+        def member(value: object) -> type:
+            if isinstance(value, type):
+                if issubclass(value, self.family):
+                    return value
+                raise ValueError(f"{value!r} is not a {self.family.__qualname__}.")
+            return registered_class_from_key(self.family, value)
+
+        return core_schema.no_info_plain_validator_function(
+            member,
+            json_schema_input_schema=core_schema.literal_schema(
+                [to_jsonable(choice) for choice in self.choices()]
+            ),
+            serialization=core_schema.plain_serializer_function_ser_schema(to_jsonable),
+        )
+
 
 @to_jsonable.register(Enum)
 def _jsonable_enum(value: Enum) -> JsonValue:
