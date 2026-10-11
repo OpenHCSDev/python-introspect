@@ -2,6 +2,11 @@
 
 0.2.2 is the first 0.2.x release published to PyPI. The 0.2.0 and 0.2.1 tags exist in git, but their publish runs were cancelled, so upgrading from PyPI goes straight from 0.1.16 to 0.2.2. The notes below cover every change in that jump.
 
+## 0.2.6
+
+Added:
+- `FieldLabel`: `Annotated` metadata declaring the display label of a field whose name does not read well to users, and `declared_field_label` to read it. Form and table builders derive every other label from the field name.
+
 ## 0.2.5
 
 Fixed:
