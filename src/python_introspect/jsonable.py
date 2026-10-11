@@ -122,10 +122,21 @@ def registered_class_from_key(family: type, key: JsonValue) -> type:
     )
 
 
+def _json_key(registered_key: object) -> JsonValue:
+    """A registry key as ``to_jsonable`` spells it; scalar keys are their own spelling.
+
+    Decoding reads scalar keys directly so it never runs the encoder.
+    """
+
+    if isinstance(registered_key, (str, int, float, bool)):
+        return registered_key
+    return to_jsonable(registered_key)
+
+
 @registered_class_from_key.register(AutoRegisterMeta)
 def _registered_class_from_registry(family: AutoRegisterMeta, key: JsonValue) -> type:
     keys_by_member = {
-        member: to_jsonable(registered_key)
+        member: _json_key(registered_key)
         for registered_key, member in family.__registry__.items()
         if issubclass(member, family)
     }
