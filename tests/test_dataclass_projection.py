@@ -244,23 +244,6 @@ def test_dataclass_mapping_union_projection_does_not_use_member_order() -> None:
     assert type(dataclass_from_mapping(NumericValue, {"value": 1}).value) is int
 
 
-def test_dataclass_mapping_rejects_ambiguous_structured_unions() -> None:
-    @dataclass(frozen=True)
-    class Left:
-        value: int
-
-    @dataclass(frozen=True)
-    class Right:
-        value: int
-
-    @dataclass(frozen=True)
-    class Envelope:
-        payload: Left | Right
-
-    with pytest.raises(TypeError, match="ambiguously matches multiple members"):
-        dataclass_from_mapping(Envelope, {"payload": {"value": 1}})
-
-
 @dataclass(frozen=True)
 class AnnotatedSequenceEnvelope:
     nodes: Annotated[Sequence["RecursiveSequenceNode"], "display text"]

@@ -2,6 +2,13 @@
 
 0.2.2 is the first 0.2.x release published to PyPI. The 0.2.0 and 0.2.1 tags exist in git, but their publish runs were cancelled, so upgrading from PyPI goes straight from 0.1.16 to 0.2.2. The notes below cover every change in that jump.
 
+## 0.3.0
+
+Changed (the stored form of some fields changes; there is no reader for the old form):
+- A dataclass field whose declared type admits several classes is stored as `{tag: fields}`, and `dataclass_from_mapping` reads the class from the tag. Before, the member of a union was guessed from which fields were present: two members with the same fields could not be told apart and the stored value did not say which class it was. Three declarations form such a family (`MemberFamily.declared_by`): a union with two or more dataclass members (other arms such as `None` or `str` stay untagged), an abstract dataclass (its concrete subclasses are the members), and a class whose metaclass is `AutoRegisterMeta`. The tag is the member's registry key when it is registered, so it survives a module move or a rename; otherwise it is the class name. The rule holds inside `tuple`, `list`, `Sequence`, `Mapping`, optional and `Annotated` declarations.
+- An unknown tag is a `ValueError` naming the known members. A value whose class is not a member of the declared family is a `TypeError` when encoding. Two members with the same tag are a `TypeError`.
+- `to_jsonable` reads the declared field types of every dataclass it encodes, so those annotations must resolve at run time (a name imported only under `TYPE_CHECKING` no longer encodes).
+
 ## 0.2.8
 
 Added:
