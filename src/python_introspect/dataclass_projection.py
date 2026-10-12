@@ -18,7 +18,7 @@ from typing import (
 from metaclass_registry import AutoRegisterMeta
 
 from .annotation_types import is_union_type, resolved_class_annotations
-from .jsonable import registered_class_from_key
+from .jsonable import MemberFamily, registered_class_from_key
 from .validation import validate_annotated_dataclass, validate_annotation_value
 
 DataclassT = TypeVar("DataclassT")
@@ -157,10 +157,32 @@ def _mapping_value_for_annotation(
         if not isinstance(value, (list, tuple)):
             raise TypeError(f"{path} must be an array.")
         return tuple(value)
+    family = MemberFamily.declared_by(annotation)
+    if family is not None and isinstance(value, Mapping):
+        if len(value) != 1:
+            raise ValueError(
+                f"{path} must be one member of {family.name} stored as "
+                f"{{tag: fields}}; got the keys {sorted(map(str, value))}."
+            )
+        ((tag, member_fields),) = value.items()
+        try:
+            member = family.member_tagged(tag)
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from error
+        if not isinstance(member_fields, Mapping):
+            raise TypeError(f"{path}.{tag} must be an object.")
+        return dataclass_from_mapping(member, member_fields)
     if is_union_type(annotation):
         successes: list[object] = []
         errors: list[Exception] = []
-        for member_type in get_args(annotation):
+        untagged_arms = tuple(
+            arm
+            for arm in get_args(annotation)
+            if family is None or not (isinstance(arm, type) and is_dataclass(arm))
+        )
+        if family is not None and isinstance(value, family.members()):
+            return value
+        for member_type in untagged_arms:
             try:
                 converted = _mapping_value_for_annotation(
                     member_type,
