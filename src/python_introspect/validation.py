@@ -29,7 +29,18 @@ class AnnotationValidationError(ValueError):
 DataclassT = TypeVar("DataclassT")
 
 
-class AnnotatedDataclassValidationMixin:
+class DataclassPostInit:
+    """Terminal owner for cooperative dataclass post-init capabilities.
+
+    Every participating mixin inherits this endpoint. C3 puts it after the
+    participating capabilities, so none needs a missing-method fallback.
+    """
+
+    def __post_init__(self) -> None:
+        pass
+
+
+class AnnotatedDataclassValidationMixin(DataclassPostInit):
     """Validate a dataclass instance from its resolved annotations after construction.
 
     Dataclass declarations inherit this mixin when their annotations are the
@@ -39,6 +50,7 @@ class AnnotatedDataclassValidationMixin:
     """
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         validate_annotated_dataclass(self)
 
 

@@ -3,7 +3,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from python_introspect import AnnotatedDataclassValidationMixin, validate_annotated_dataclass
+from python_introspect import (
+    AnnotatedDataclassValidationMixin, DataclassPostInit, validate_annotated_dataclass,
+)
 
 
 DEFERRED = object()
@@ -46,3 +48,24 @@ def test_field_descriptor_failure_propagates_its_original_identity():
     with pytest.raises(RuntimeError) as raised:
         FailedRead(3)
     assert raised.value is failure
+
+
+def test_validator_cooperates_with_the_next_post_init_capability():
+    events = []
+
+    class PrepareValue(DataclassPostInit):
+        def __post_init__(self):
+            events.append("prepare")
+            self.value = int(self.value)
+            super().__post_init__()
+
+    @dataclass
+    class PreparedValue(AnnotatedDataclassValidationMixin, PrepareValue):
+        value: int
+        label: str = "ok"
+
+    assert PreparedValue("7").value == 7
+    assert events == ["prepare"]
+    with pytest.raises(TypeError, match="label must be str"):
+        PreparedValue("7", label=None)
+    assert events == ["prepare", "prepare"]

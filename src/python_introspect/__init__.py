@@ -43,6 +43,7 @@ from .enableable import (
 from .choices import AnnotationChoices, declared_annotation_choices
 from .field_label import FieldLabel, declared_field_label
 from .validation import (
+    DataclassPostInit,
     AnnotatedDataclassValidationMixin,
     AnnotationValidationError,
     overlay_non_none_dataclass,
@@ -121,6 +122,7 @@ __all__ = [
     "is_enableable",
     "mark_enableable",
     # Runtime annotation validation
+    "DataclassPostInit",
     "AnnotatedDataclassValidationMixin",
     "AnnotationValidationError",
     "overlay_non_none_dataclass",
