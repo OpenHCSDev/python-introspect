@@ -19,6 +19,7 @@ from .signature_analyzer import (
     # Plugin registration
     register_namespace_provider,
     register_type_resolver,
+    resolve_declared_type,
     set_signature_analysis_target,
     signature_analysis_target,
 )
@@ -102,6 +103,7 @@ __all__ = [
     # Plugin registration
     "register_namespace_provider",
     "register_type_resolver",
+    "resolve_declared_type",
     "set_signature_analysis_target",
     "signature_analysis_target",
     # Unified analysis

@@ -111,7 +111,7 @@ def _get_extended_namespace() -> Dict[str, Any]:
     return result
 
 
-def _resolve_type(t: type) -> type:
+def resolve_declared_type(t: type) -> type:
     """Resolve a type through registered resolvers, returning the unwrapped type."""
     for resolver in _type_resolvers:
         resolved = resolver(t)
@@ -502,7 +502,7 @@ class DocstringExtractor:
         """Resolve a proxy type through the registered type authority."""
         if not inspect.isclass(target):
             return target
-        return _resolve_type(target)
+        return resolve_declared_type(target)
 
     @staticmethod
     def _parse_docstring(docstring: str) -> DocstringInfo:
@@ -1045,7 +1045,7 @@ class SignatureAnalyzer:
         type_hints = resolved_class_annotations(dataclass_type)
         parameters = {}
         for field in dataclasses.fields(dataclass_type):
-            if field.name.startswith(CONSTANTS.DUNDER_PREFIX) and field.name.endswith(CONSTANTS.DUNDER_SUFFIX):
+            if not field.init:
                 continue
             param_type = type_hints[field.name]
             if field.default is not dataclasses.MISSING:
@@ -1286,7 +1286,7 @@ class SignatureAnalyzer:
                 # If the field type is a dataclass, extract its docstring as field documentation
                 if dataclasses.is_dataclass(field_type):
                     # ENHANCEMENT: Resolve lazy dataclasses to their base classes for documentation
-                    resolved_field_type = _resolve_type(field_type)
+                    resolved_field_type = resolve_declared_type(field_type)
 
                     docstring_info = DocstringExtractor.extract(resolved_field_type)
                     if docstring_info.summary:
@@ -1373,7 +1373,7 @@ class SignatureAnalyzer:
 
             # ENHANCEMENT: Resolve lazy dataclasses to their base classes
             # Frameworks can register explicit proxy-to-public type resolvers.
-            resolved_type = _resolve_type(dataclass_type)
+            resolved_type = resolve_declared_type(dataclass_type)
 
             # Check cache first for performance
             cache_key = (resolved_type.__name__, resolved_type.__module__)
