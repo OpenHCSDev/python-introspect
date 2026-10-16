@@ -77,7 +77,12 @@ def overlay_non_none_dataclass(
 
 
 def validate_annotated_dataclass(instance: object) -> None:
-    """Validate every field from the instance's resolved dataclass annotations."""
+    """Validate declared field values through their owning access semantics.
+
+    A field descriptor may supply an effective value (for example inherited
+    configuration data). Bypassing it validates private storage instead of the
+    declared value. Literal null remains subject to the annotation.
+    """
 
     owner_type = type(instance)
     if not is_dataclass(instance) or isinstance(instance, type):
@@ -88,8 +93,8 @@ def validate_annotated_dataclass(instance: object) -> None:
 
     annotations = resolved_class_annotations(owner_type)
     for declared_field in fields(instance):
-        annotation = annotations.get(declared_field.name, declared_field.type)
-        value = object.__getattribute__(instance, declared_field.name)
+        annotation = annotations[declared_field.name]
+        value = getattr(instance, declared_field.name)
         validate_annotation_value(
             annotation,
             value,
