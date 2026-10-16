@@ -21,7 +21,7 @@ from weakref import WeakKeyDictionary
 from dataclasses import dataclass, field
 
 from metaclass_registry import AutoRegisterMeta
-from .annotation_types import optional_member_type
+from .annotation_types import optional_member_type, resolved_class_annotations
 from .docstring_annotations import infer_parameter_annotation
 
 # =============================================================================
@@ -1042,48 +1042,30 @@ class SignatureAnalyzer:
 
         logger.debug(f"❌ CACHE MISS for {dataclass_type.__name__} (id={id(dataclass_type)}), cache has {len(SignatureAnalyzer._dataclass_analysis_cache)} entries")
 
-        try:
-            # Try to get type hints, fall back to __annotations__ if resolution fails
-            try:
-                type_hints = get_type_hints(dataclass_type, include_extras=True)
-            except Exception:
-                type_hints = inspect.get_annotations(dataclass_type, eval_str=False)
-
-            parameters = {}
-
-            for field in dataclasses.fields(dataclass_type):
-                # Skip dunder fields (internal/reserved fields)
-                if field.name.startswith(CONSTANTS.DUNDER_PREFIX) and field.name.endswith(CONSTANTS.DUNDER_SUFFIX):
-                    continue
-
-                param_type = type_hints.get(field.name, str)
-
-                # Get default value
-                if field.default != dataclasses.MISSING:
-                    default_value = field.default
-                    is_required = False
-                elif field.default_factory != dataclasses.MISSING:
-                    default_value = field.default_factory()
-                    is_required = False
-                else:
-                    default_value = None
-                    is_required = True
-
-                parameters[field.name] = ParameterInfo(
-                    name=field.name,
-                    param_type=param_type,
-                    default_value=default_value,
-                    is_required=is_required,
-                    description_owner=dataclass_type,
-                )
-
-            # PERFORMANCE: Cache the result to avoid re-parsing
-            SignatureAnalyzer._dataclass_analysis_cache[cache_key] = parameters
-            return parameters
-
-        except Exception:
-            # Return empty dict on error (don't cache errors)
-            return {}
+        type_hints = resolved_class_annotations(dataclass_type)
+        parameters = {}
+        for field in dataclasses.fields(dataclass_type):
+            if field.name.startswith(CONSTANTS.DUNDER_PREFIX) and field.name.endswith(CONSTANTS.DUNDER_SUFFIX):
+                continue
+            param_type = type_hints[field.name]
+            if field.default is not dataclasses.MISSING:
+                default_value = field.default
+                is_required = False
+            elif field.default_factory is not dataclasses.MISSING:
+                default_value = field.default_factory()
+                is_required = False
+            else:
+                default_value = None
+                is_required = True
+            parameters[field.name] = ParameterInfo(
+                name=field.name,
+                param_type=param_type,
+                default_value=default_value,
+                is_required=is_required,
+                description_owner=dataclass_type,
+            )
+        SignatureAnalyzer._dataclass_analysis_cache[cache_key] = parameters
+        return parameters
 
     @staticmethod
     def _materialize_dataclass_descriptions(dataclass_type: type, requested: ParameterInfo) -> None:

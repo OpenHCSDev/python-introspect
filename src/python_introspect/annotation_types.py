@@ -25,7 +25,9 @@ def resolved_class_annotations(owner: type) -> dict[str, object]:
     reference is left as a ``ForwardRef``, the form ``get_type_hints`` produces
     for it on Python 3.11 and later.
     """
-    annotations = get_type_hints(owner, include_extras=True)
+    annotations = get_type_hints(
+        owner, localns={owner.__name__: owner}, include_extras=True
+    )
     unresolved = set(annotations)
     for declaration in owner.__mro__:
         class_namespace = dict(vars(declaration))
