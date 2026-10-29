@@ -19,6 +19,7 @@ from .signature_analyzer import (
     # Plugin registration
     register_namespace_provider,
     register_type_resolver,
+    resolve_declared_type,
     set_signature_analysis_target,
     signature_analysis_target,
 )
@@ -42,6 +43,7 @@ from .enableable import (
 from .choices import AnnotationChoices, declared_annotation_choices
 from .field_label import FieldLabel, declared_field_label
 from .validation import (
+    DataclassPostInit,
     AnnotatedDataclassValidationMixin,
     AnnotationValidationError,
     overlay_non_none_dataclass,
@@ -102,6 +104,7 @@ __all__ = [
     # Plugin registration
     "register_namespace_provider",
     "register_type_resolver",
+    "resolve_declared_type",
     "set_signature_analysis_target",
     "signature_analysis_target",
     # Unified analysis
@@ -119,6 +122,7 @@ __all__ = [
     "is_enableable",
     "mark_enableable",
     # Runtime annotation validation
+    "DataclassPostInit",
     "AnnotatedDataclassValidationMixin",
     "AnnotationValidationError",
     "overlay_non_none_dataclass",

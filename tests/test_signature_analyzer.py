@@ -312,18 +312,18 @@ class TestSignatureAnalyzer:
         assert params["name"].is_required is True
         assert params["value"].default_value == 10
 
-    def test_skip_dunder_parameters(self):
-        """Test that dunder parameters are skipped."""
+    def test_constructor_fields_are_authoritative(self):
+        """Init capability, not spelling, defines constructor parameters."""
         @dataclass
         class Config:
             name: str = "test"
-            __internal__: int = 0
+            __declared__: int = 1
+            __internal__: int = field(default=0, init=False)
+            computed: int = field(default=2, init=False)
 
-        analyzer = SignatureAnalyzer()
-        params = analyzer.analyze(Config)
+        params = SignatureAnalyzer.analyze(Config)
 
-        assert "name" in params
-        assert "__internal__" not in params
+        assert set(params) == {"name", "__declared__"}
 
     def test_analyze_with_optional_types(self):
         """Test analyzing functions with Optional types."""
