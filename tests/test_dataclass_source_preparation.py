@@ -62,9 +62,11 @@ def test_throwing_factory_stays_uncached_and_retryable():
 
     SignatureAnalyzer.prepare_dataclass_declaration(Declaration)
     assert calls == []
-    assert SignatureAnalyzer._analyze_dataclass(Declaration) == {}
+    with pytest.raises(RuntimeError):
+        SignatureAnalyzer._analyze_dataclass(Declaration)
     assert Declaration not in SignatureAnalyzer._dataclass_analysis_cache
-    assert SignatureAnalyzer._analyze_dataclass(Declaration) == {}
+    with pytest.raises(RuntimeError):
+        SignatureAnalyzer._analyze_dataclass(Declaration)
     assert calls == [1, 1]
 
 
