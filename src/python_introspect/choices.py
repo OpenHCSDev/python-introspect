@@ -26,13 +26,30 @@ class AnnotationChoices(ABC):
 
         return str(choice)
 
+    def labelled_choices(self) -> tuple[tuple[str, object], ...]:
+        """Return each label with its value in one enumeration of the choice set."""
+        return tuple((self.label(choice), choice) for choice in self.choices())
+
     def choice_for_label(self, label: str) -> object:
         """Decode one display label back to its admissible value."""
-
-        for choice in self.choices():
-            if self.label(choice) == label:
+        options = self.labelled_choices()
+        for name, choice in options:
+            if name == label:
                 return choice
-        raise ValueError(f"{label!r} is not one of {[self.label(c) for c in self.choices()]}.")
+        raise ValueError(f"{label!r} is not one of {[name for name, _ in options]}.")
+
+class LabelledChoices(AnnotationChoices):
+    """Choices whose source already supplies labels and values together."""
+
+    @abstractmethod
+    def labelled_choices(self) -> tuple[tuple[str, object], ...]:
+        """Return the source's ordered label/value pairs."""
+
+    def choices(self) -> tuple[object, ...]:
+        return tuple(value for _, value in self.labelled_choices())
+
+    def label(self, choice: object) -> str:
+        return next(label for label, value in self.labelled_choices() if value == choice)
 
 
 def declared_annotation_choices(annotation: object) -> AnnotationChoices | None:
