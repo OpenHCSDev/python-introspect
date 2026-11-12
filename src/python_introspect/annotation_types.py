@@ -179,7 +179,7 @@ def enum_input_values(annotation: object) -> tuple[str, ...]:
 
     choices = declared_annotation_choices(annotation)
     if choices is not None:
-        return tuple(choices.label(choice) for choice in choices.choices())
+        return tuple(label for label, _ in choices.labelled_choices())
     enum_type = declared_enum_type(annotation)
     if enum_type is None:
         return ()

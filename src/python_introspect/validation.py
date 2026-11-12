@@ -255,7 +255,7 @@ def _(metadata: AnnotationChoices, value: object, path: str) -> None:
         if item not in choices:
             raise AnnotationValidationError(
                 f"{path} must hold values from "
-                f"{[metadata.label(choice) for choice in choices]}; got {item!r}."
+                f"{[label for label, _ in metadata.labelled_choices()]}; got {item!r}."
             )
 
 
