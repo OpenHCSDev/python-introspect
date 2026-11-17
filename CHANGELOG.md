@@ -2,6 +2,16 @@
 
 0.2.2 is the first 0.2.x release published to PyPI. The 0.2.0 and 0.2.1 tags exist in git, but their publish runs were cancelled, so upgrading from PyPI goes straight from 0.1.16 to 0.2.2. The notes below cover every change in that jump.
 
+## 0.4.0
+
+Added:
+- `python_introspect.choices.LabelledChoices`: a declared source's choices with their labels, read together, so CLI labels and validation feedback use one enumeration.
+
+Fixed:
+- A broken dataclass declaration propagates from the analysis owner instead of being swallowed.
+- Factory retry control stays aligned with propagated failures.
+- Distributions include the inline typing marker (`py.typed`).
+
 ## 0.3.0
 
 Changed (the stored form of some fields changes; there is no reader for the old form):
