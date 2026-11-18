@@ -28,7 +28,6 @@ from enum import Enum
 from functools import singledispatch
 from pathlib import Path
 from typing import Annotated, ForwardRef, TypeAlias, get_args, get_origin
-from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -49,20 +48,16 @@ JsonValue: TypeAlias = (
 JsonObject: TypeAlias = Mapping[str, JsonValue]
 
 
-_FIELD_TYPES_BY_DATACLASS: WeakKeyDictionary[type, Mapping[str, object]] = WeakKeyDictionary()
-
-
 def _declared_field_types(owner: type) -> Mapping[str, object]:
-    if owner not in _FIELD_TYPES_BY_DATACLASS:
-        try:
-            _FIELD_TYPES_BY_DATACLASS[owner] = resolved_class_annotations(owner)
-        except NameError as error:
-            raise TypeError(
-                f"{owner.__qualname__} cannot be projected: a field type does not resolve "
-                f"at run time ({error}). A field's declared type decides its stored form, "
-                "so import the name outside TYPE_CHECKING."
-            ) from error
-    return _FIELD_TYPES_BY_DATACLASS[owner]
+    """The owner's resolved field types, kept per class by `resolved_class_annotations`."""
+    try:
+        return resolved_class_annotations(owner)
+    except NameError as error:
+        raise TypeError(
+            f"{owner.__qualname__} cannot be projected: a field type does not resolve "
+            f"at run time ({error}). A field's declared type decides its stored form, "
+            "so import the name outside TYPE_CHECKING."
+        ) from error
 
 
 def _jsonable_dataclass(value: object) -> JsonValue:

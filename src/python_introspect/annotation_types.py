@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Mapping
 from enum import Enum
+from types import MappingProxyType
+from weakref import WeakKeyDictionary
 from typing import (
     Annotated,
     ForwardRef,
@@ -16,7 +19,10 @@ from typing import (
 )
 
 
-def resolved_class_annotations(owner: type) -> dict[str, object]:
+_RESOLVED_BY_CLASS: WeakKeyDictionary[type, Mapping[str, object]] = WeakKeyDictionary()
+
+
+def resolved_class_annotations(owner: type) -> Mapping[str, object]:
     """Resolve nested type strings in the class that declared each field.
 
     Python 3.10 leaves strings inside PEP 585 aliases unresolved. Complete
@@ -24,7 +30,20 @@ def resolved_class_annotations(owner: type) -> dict[str, object]:
     A recursive alias such as ``V = int | list["V"]`` names itself; the inner
     reference is left as a ``ForwardRef``, the form ``get_type_hints`` produces
     for it on Python 3.11 and later.
+
+    The answer is a fact about the class, so it is resolved once per class and kept
+    (read-only) while the class lives. Every validated instance asks for its class's
+    annotations (``AnnotatedDataclassValidationMixin``), and resolving them again for
+    each one was most of building a nested settings object. A class whose annotations
+    do not resolve yet raises, and nothing is kept, so a later call resolves it then.
     """
+    resolved = _RESOLVED_BY_CLASS.get(owner)
+    if resolved is None:
+        resolved = _RESOLVED_BY_CLASS[owner] = MappingProxyType(_resolve_class_annotations(owner))
+    return resolved
+
+
+def _resolve_class_annotations(owner: type) -> dict[str, object]:
     annotations = get_type_hints(
         owner, localns={owner.__name__: owner}, include_extras=True
     )
